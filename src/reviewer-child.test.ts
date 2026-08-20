@@ -4,7 +4,7 @@ import {
   DEFAULT_MAX_LINES,
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { paginateOutput } from "./reviewer-child.js";
+import { paginateOutput, REVIEW_SYSTEM_PROMPT } from "./reviewer-child.js";
 
 function readAllPages(output: string): { reconstructed: string; pages: number } {
   let cursor = 0;
@@ -21,6 +21,15 @@ function readAllPages(output: string): { reconstructed: string; pages: number } 
     cursor = page.nextCursor ?? cursor;
   }
 }
+
+describe("reviewer policy", () => {
+  it("keeps unlikely environmental scenarios out of actionable findings", () => {
+    expect(REVIEW_SYSTEM_PROMPT).toContain("realistic in normal supported use");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("configuration drift");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("in residual risks instead of findings");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("smallest proportionate recommendation");
+  });
+});
 
 describe("paginateOutput", () => {
   it("retrieves output larger than both tool limits without losing content", () => {
