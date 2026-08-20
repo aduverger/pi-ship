@@ -1,4 +1,4 @@
-# pi-ship
+# @aduverger/pi-ship
 
 Workspace-aware shipping workflow for the [Pi coding agent](https://pi.dev): rebase, simplify, independently review, test, push, and open cross-linked GitHub pull requests.
 
@@ -11,17 +11,27 @@ Workspace-aware shipping workflow for the [Pi coding agent](https://pi.dev): reb
 - GitHub CLI (`gh`), authenticated for `github.com`
 - Clean, committed feature branches in every selected repository, including review-only context repositories
 
-## Install locally
+## Install
 
-```bash
-npm install
-npm run build
-pi install ./pi-ship
+From npm:
+
+```sh
+pi install npm:@aduverger/pi-ship
 ```
 
-For development:
+From a checkout:
 
-```bash
+```sh
+git clone https://github.com/aduverger/pi-ship.git
+cd pi-ship
+npm install
+npm run build
+pi install .
+```
+
+For a one-off development run:
+
+```sh
 pi -e ./dist/index.js
 ```
 
@@ -77,9 +87,23 @@ The changed-line simplification prompt is adapted from [MattDevy/pi-simplify](ht
 
 ## Development
 
-```bash
-npm run typecheck
-npm test
-npm run build
-npm run check
+```sh
+make check
+make pack-check
 ```
+
+Release a stable version from a clean, synchronized `main` branch:
+
+```sh
+make release VERSION=0.1.1
+```
+
+For a prerelease, use a non-`latest` npm tag:
+
+```sh
+make release VERSION=0.2.0-rc.1 NPM_TAG=next
+```
+
+The release target validates Git and npm state, updates package versions, runs all quality gates, publishes the public package, verifies the registry, and pushes the matching Git tag.
+
+`.github/workflows/publish.yml` also supports npm trusted publishing with provenance. Configure the npm trusted publisher for repository `aduverger/pi-ship`, workflow `publish.yml`, and GitHub environment `npm`; dispatch with `dry_run: true` to verify release gates before publishing.
