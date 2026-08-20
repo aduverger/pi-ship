@@ -28,7 +28,7 @@ import {
   reviewHeadline,
   type ReviewEntryData,
 } from "./review-display.js";
-import { runWorkspaceReviewer } from "./reviewer.js";
+import { collectReviewerPriorDecisions, runWorkspaceReviewer } from "./reviewer.js";
 import { buildWorkspaceSimplificationPrompt } from "./simplify.js";
 import type {
   FindingDecision,
@@ -462,6 +462,7 @@ export class ShipWorkflow {
           branch: repository.branch,
           changed: repository.changed,
         })),
+        priorDecisions: collectReviewerPriorDecisions(storedReviews(this.run)),
       },
       signal,
       onProgress,

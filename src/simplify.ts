@@ -40,7 +40,7 @@ First derive a concise workspace intent from the conversation: the user's goal, 
 
 ## Scope
 
-Only review and modify the changed lines listed below. Changed line numbers refer to the current file contents. You may read surrounding code and other selected repositories for context, but must not edit outside the listed files and ranges. For added files, the entire file is in scope.
+Review and modify only the files listed below. Changed line numbers refer to the current file contents and identify the feature diff to prioritize, but they are not hard edit boundaries. You may simplify surrounding implementation within a listed file when it directly improves the changed feature. Other selected repositories are read-only context. For added files, the entire file is in scope.
 
 ${scopes}
 
@@ -52,5 +52,5 @@ ${scopes}
 4. Run the relevant existing tests in every changed repository. If no suitable test exists, report it as skipped with a reason.
 5. Call ship_report with action "simplification-complete", the workspace intent, and one repository report per changed repository. Include every test command and outcome.
 
-Do not add features, change public APIs, or refactor unchanged code. If a worthwhile simplification requires an out-of-scope edit, leave it alone and mention it in that repository's summary.`;
+Do not add features, change public APIs, or refactor files that are not listed. If a worthwhile simplification requires an out-of-scope file edit, leave it alone and mention it in that repository's summary.`;
 }

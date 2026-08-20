@@ -25,7 +25,7 @@ function repository(overrides: Partial<ShipRepositoryState> = {}): ShipRepositor
 }
 
 describe("buildWorkspaceSimplificationPrompt", () => {
-  it("limits edits to current changed lines and added files", () => {
+  it("uses changed lines as guidance while limiting edits to listed files", () => {
     const prompt = buildWorkspaceSimplificationPrompt([
       repository(),
       repository({ name: "frontend", path: "/workspace/frontend", changed: false, simplifyScope: [] }),
@@ -34,7 +34,8 @@ describe("buildWorkspaceSimplificationPrompt", () => {
     expect(prompt).toContain("src/changed.ts (modified; changed lines: 4-8)");
     expect(prompt).toContain("src/new.ts (added; entire file is in scope)");
     expect(prompt).not.toContain("### frontend");
-    expect(prompt).toContain("may read surrounding code and other selected repositories for context");
-    expect(prompt).toContain("must not edit outside the listed files and ranges");
+    expect(prompt).toContain("they are not hard edit boundaries");
+    expect(prompt).toContain("Other selected repositories are read-only context");
+    expect(prompt).toContain("Review and modify only the files listed below");
   });
 });

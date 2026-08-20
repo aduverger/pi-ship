@@ -130,8 +130,18 @@ export interface ReviewerManifestRepository {
   changed: boolean;
 }
 
+export interface ReviewerPriorDecision {
+  round: number;
+  findingId: string;
+  repository: string;
+  title: string;
+  action: "accept" | "defer";
+  rationale: string;
+}
+
 export interface ReviewerManifest {
   root: string;
   intent: string;
   repositories: ReviewerManifestRepository[];
+  priorDecisions?: ReviewerPriorDecision[];
 }
