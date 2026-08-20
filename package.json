@@ -2,6 +2,14 @@
   "name": "@aduverger/pi-ship",
   "version": "0.1.0",
   "description": "Workspace-aware simplify, review, and GitHub pull request workflow for Pi.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aduverger/pi-ship.git"
+  },
+  "homepage": "https://github.com/aduverger/pi-ship#readme",
+  "bugs": {
+    "url": "https://github.com/aduverger/pi-ship/issues"
+  },
   "type": "module",
   "license": "MIT",
   "author": "Alexandre Duverger",
@@ -22,8 +30,15 @@
     "dist",
     "README.md",
     "NOTICE.md",
+    "scripts/verify-package.mjs",
     "LICENSE"
   ],
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "pi": {
     "extensions": [
       "./dist/index.js"
@@ -49,7 +64,9 @@
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "npm run typecheck && npm test && npm run build",
+    "verify:package": "node scripts/verify-package.mjs",
+    "pack:check": "npm_config_cache=.npm-cache npm pack --dry-run && npm run verify:package",
+    "check": "npm run typecheck && npm test && npm run build && npm run verify:package",
     "prepack": "npm run check"
   }
 }
