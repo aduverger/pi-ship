@@ -44,7 +44,7 @@ ${manifest.intent}
 
 ${repositories}
 
-Use ship_git to inspect every changed repository's summary, name-status, complete diff, and commit history. Read surrounding implementation and selected unchanged repositories where needed. Check cross-repository contracts explicitly. Do not edit files. Finish by calling submit_review exactly once.`;
+Use ship_git to inspect every changed repository's summary, name-status, complete diff, and commit history. When ship_git returns a nextCursor, repeat the same request with that cursor until complete is true. Read surrounding implementation and selected unchanged repositories where needed. Check cross-repository contracts explicitly. Do not edit files. Finish by calling submit_review exactly once.`;
 }
 
 function isReviewResult(value: unknown): value is ReviewResult {

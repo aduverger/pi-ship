@@ -19,7 +19,12 @@ async function git(cwd: string, args: string[]): Promise<void> {
   await execFileAsync("git", args, { cwd });
 }
 
-async function createClonedRepository(workspace: string, name: string, changed: boolean): Promise<string> {
+async function createClonedRepository(
+  workspace: string,
+  name: string,
+  changed: boolean,
+  branch = "feature",
+): Promise<string> {
   const fixtures = join(workspace, "_fixtures");
   const seed = join(fixtures, `${name}-seed`);
   const bare = join(fixtures, `${name}.git`);
@@ -36,12 +41,12 @@ async function createClonedRepository(workspace: string, name: string, changed: 
   await git(repository, ["config", "user.email", "test@example.com"]);
   await git(repository, ["config", "user.name", "Test"]);
 
+  if (branch !== "main") await git(repository, ["switch", "-c", branch]);
   if (changed) {
-    await git(repository, ["switch", "-c", "feature"]);
     await writeFile(join(repository, "file.txt"), "changed\n", "utf8");
     await git(repository, ["add", "."]);
     await git(repository, ["commit", "-m", "change"]);
-    await git(repository, ["push", "-u", "origin", "feature"]);
+    await git(repository, ["push", "-u", "origin", branch]);
   }
   await git(repository, ["remote", "set-url", "origin", `https://github.com/example/${name}.git`]);
   return repository;
@@ -98,13 +103,17 @@ function fakePi(state: FakePiState): ExtensionAPI {
   } as unknown as ExtensionAPI;
 }
 
-function fakeContext(cwd: string, entries: SessionEntry[] = []): ExtensionCommandContext {
+function fakeContext(
+  cwd: string,
+  entries: SessionEntry[] = [],
+  branchEntries: SessionEntry[] = entries,
+): ExtensionCommandContext {
   return {
     cwd,
     waitForIdle: async () => {},
     sessionManager: {
       getEntries: () => entries,
-      getBranch: () => entries,
+      getBranch: () => branchEntries,
     },
     ui: {
       setStatus: () => {},
@@ -115,6 +124,44 @@ function fakeContext(cwd: string, entries: SessionEntry[] = []): ExtensionComman
 }
 
 describe("ShipWorkflow", () => {
+  it("rejects selected repositories checked out on their default branch", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-default-branch-"));
+    await createClonedRepository(workspace, "api", false, "main");
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    const workflow = new ShipWorkflow(fakePi(state));
+
+    await expect(workflow.start("", fakeContext(workspace))).rejects.toThrow(
+      "api is checked out on its default branch main",
+    );
+  });
+
+  it("restores state only from the active session branch and clears stale state", () => {
+    const first = {
+      version: 1,
+      id: "first-run",
+      root: "/workspace",
+      stage: "simplifying",
+      createdAt: 1,
+      updatedAt: 1,
+      repositories: [],
+      rebaseIndex: 0,
+    } satisfies ShipRun;
+    const second = { ...first, id: "second-run", stage: "drafting" as const };
+    const firstEntry = { type: "custom", customType: "pi-ship-state", data: first } as SessionEntry;
+    const secondEntry = { type: "custom", customType: "pi-ship-state", data: second } as SessionEntry;
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    const workflow = new ShipWorkflow(fakePi(state));
+
+    workflow.restore(fakeContext("/workspace", [firstEntry, secondEntry], [firstEntry]));
+    expect(workflow.status(fakeContext("/workspace"))).toContain("first-ru");
+
+    workflow.restore(fakeContext("/workspace", [firstEntry, secondEntry], [secondEntry]));
+    expect(workflow.status(fakeContext("/workspace"))).toContain("second-r");
+
+    workflow.restore(fakeContext("/workspace", [firstEntry, secondEntry], []));
+    expect(workflow.status(fakeContext("/workspace"))).toBe("No /ship run is recorded in this session.");
+  });
+
   it("discovers a workspace, rebases changed repos, and prompts scoped simplification", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "pi-ship-flow-"));
     const api = await createClonedRepository(workspace, "api", true);
@@ -169,6 +216,8 @@ describe("ShipWorkflow", () => {
     );
     expect(reviewed.content[0]?.text).toContain("No actionable findings");
     expect(reviewed.content[0]?.text).toContain("Call ship_report with action \"publish\"");
+    expect(state.entries.some((entry) => entry.customType === "pi-ship-review")).toBe(true);
+    expect(workflow.status(ctx)).toContain("Independent review round 1 — pass");
 
     const published = await workflow.handleReport(
       {
@@ -271,5 +320,8 @@ describe("ShipWorkflow", () => {
       undefined,
     );
     expect(result.content[0]?.text).toContain("Apply only these user-approved review fixes");
+    const reviewEntry = state.entries.at(-1);
+    expect(reviewEntry?.customType).toBe("pi-ship-review");
+    expect(reviewEntry?.data).toMatchObject({ review: { decisions: decision.decisions } });
   });
 });

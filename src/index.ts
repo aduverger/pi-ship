@@ -1,6 +1,13 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Box, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import {
+  formatFullReview,
+  formatReviewSummary,
+  REVIEW_ENTRY_TYPE,
+  type ReviewEntryData,
+} from "./review-display.js";
 import type { ShipReportInput } from "./types.js";
 import { ShipWorkflow } from "./workflow.js";
 
@@ -46,6 +53,22 @@ export default function piShip(pi: ExtensionAPI): void {
   const workflow = new ShipWorkflow(pi);
 
   pi.on("session_start", (_event, ctx) => workflow.restore(ctx));
+  pi.on("session_tree", (_event, ctx) => workflow.restore(ctx));
+
+  pi.registerEntryRenderer<ReviewEntryData>(REVIEW_ENTRY_TYPE, (entry, { expanded }, theme) => {
+    const review = entry.data?.review;
+    if (!review) return;
+
+    let color: "error" | "warning" | "success" = "success";
+    if (review.result.findings.some((finding) => finding.severity === "blocking")) color = "error";
+    else if (review.result.findings.length > 0) color = "warning";
+
+    const content = expanded ? formatFullReview(review) : formatReviewSummary(review);
+    const [headline = "Independent review", ...details] = content.split("\n");
+    const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+    box.addChild(new Text([theme.fg(color, headline), ...details].join("\n"), 0, 0));
+    return box;
+  });
 
   pi.on("before_agent_start", (event) => {
     const guidance = workflow.guidance();

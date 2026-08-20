@@ -7,7 +7,7 @@ Workspace-aware shipping workflow for the [Pi coding agent](https://pi.dev): reb
 - Pi 0.84 or newer
 - Git
 - GitHub CLI (`gh`), authenticated for `github.com`
-- Clean, committed feature branches in every selected changed repository
+- Clean, committed feature branches in every selected repository, including review-only context repositories
 
 ## Install locally
 
@@ -50,23 +50,23 @@ Operational commands:
 
 ## Workflow
 
-1. Validate that every selected repository is clean and committed.
+1. Validate that every selected repository is clean, committed, and checked out on a non-default feature branch.
 2. Resolve each repository's default branch independently of its configured upstream.
 3. Fetch and rebase changed feature branches.
 4. Simplify only changed current-file line ranges, then test and commit per repository.
-5. Launch one fresh, read-only Pi reviewer over the complete selected workspace. It inherits the active model and always uses high thinking.
-6. Return repository-qualified findings to the main session for analysis and a user decision.
+5. Launch one fresh, read-only Pi reviewer over the complete selected workspace. It inherits the active model, always uses high thinking, and can page through complete Git diffs.
+6. Persist a visible repository-qualified findings summary in the active session branch and return the full review to the main agent for analysis and a user decision.
 7. Apply approved fixes, test, commit, and independently review the complete workspace again.
 8. Verify that every pushed SHA exactly matches the reviewed SHA and that default branches have not advanced.
 9. Push all changed branches, create or update one PR per changed repository, and cross-link related PRs.
 
-Unchanged selected repositories remain available to the reviewer as integration context but do not produce commits or PRs.
+Unchanged selected repositories remain available to the reviewer as integration context and do not produce commits or PRs unless an approved review fix changes them.
 
 The changed-line simplification prompt is adapted from [MattDevy/pi-simplify](https://github.com/MattDevy/pi-extensions/tree/main/packages/pi-simplify). See [NOTICE.md](NOTICE.md).
 
 ## Safety properties
 
-- No dirty repository enters the workflow.
+- No dirty or default-branch repository enters the workflow.
 - Reviewer subprocess has no bash, edit, or write tools.
 - Rebased existing branches use `--force-with-lease` against the observed remote SHA.
 - A moved default branch restarts rebase, simplification, and review before publication.

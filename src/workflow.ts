@@ -21,16 +21,23 @@ import {
   type CommandRunner,
 } from "./git.js";
 import { withRelatedPullRequests } from "./related-prs.js";
+import {
+  formatFullReview,
+  formatReviewSummary,
+  REVIEW_ENTRY_TYPE,
+  reviewHeadline,
+  type ReviewEntryData,
+} from "./review-display.js";
 import { runWorkspaceReviewer } from "./reviewer.js";
 import { buildWorkspaceSimplificationPrompt } from "./simplify.js";
 import type {
   FindingDecision,
   PullRequestDraft,
   RepositoryReport,
-  ReviewFinding,
   ShipRepositoryState,
   ShipReportInput,
   ShipRun,
+  StoredReview,
   TestExecution,
 } from "./types.js";
 
@@ -69,9 +76,8 @@ function testsMarkdown(tests: readonly TestExecution[]): string {
     .join("\n");
 }
 
-function formatFinding(finding: ReviewFinding): string {
-  const location = `${finding.repository}/${finding.file}${finding.line ? `:${finding.line}` : ""}`;
-  return `### ${finding.id} — ${finding.title}\n\n- Severity: ${finding.severity}\n- Location: ${location}\n- Confidence: ${finding.confidence}\n- Evidence: ${finding.evidence}\n- Impact: ${finding.impact}\n- Recommendation: ${finding.recommendation}`;
+function storedReviews(run: ShipRun): StoredReview[] {
+  return [...(run.reviewHistory ?? []), ...(run.review ? [run.review] : [])];
 }
 
 function isStoredRun(value: unknown): value is ShipRun {
@@ -92,11 +98,12 @@ export class ShipWorkflow {
   }
 
   restore(ctx: ExtensionContext): void {
-    const entries = ctx.sessionManager.getEntries();
-    for (let index = entries.length - 1; index >= 0; index--) {
-      const entry = entries[index];
+    this.run = undefined;
+    const branch = ctx.sessionManager.getBranch();
+    for (let index = branch.length - 1; index >= 0; index--) {
+      const entry = branch[index];
       if (entry?.type === "custom" && entry.customType === STATE_ENTRY && isStoredRun(entry.data)) {
-        this.run = entry.data;
+        this.run = structuredClone(entry.data);
         break;
       }
     }
@@ -179,6 +186,10 @@ export class ShipWorkflow {
       lines.push(`- ${repository.name}: ${repository.branch} -> ${repository.baseBranch} (${labels.join(", ")})`);
     }
     if (this.run.lastError) lines.push(`Last error: ${this.run.lastError}`);
+    const reviews = storedReviews(this.run);
+    if (reviews.length > 0) {
+      lines.push("", "Reviews:", ...reviews.flatMap((review) => formatReviewSummary(review).split("\n")));
+    }
     this.updateStatus(ctx);
     return lines.join("\n");
   }
@@ -281,8 +292,8 @@ export class ShipWorkflow {
     const baseSha = await requireGit(this.runCommand, path, ["rev-parse", baseRef]);
     const remoteBranch = await git(this.runCommand, path, ["rev-parse", "--verify", `refs/remotes/origin/${branch}`]);
     const changed = await hasChangesAgainstBase(this.runCommand, path, baseRef);
-    if (changed && branch === baseBranch) {
-      throw new Error(`${basename(path)} has changes on its default branch ${baseBranch}; /ship requires a feature branch.`);
+    if (branch === baseBranch) {
+      throw new Error(`${basename(path)} is checked out on its default branch ${baseBranch}; every selected repository must use a feature branch.`);
     }
 
     return {
@@ -481,6 +492,7 @@ export class ShipWorkflow {
     };
     this.run.stage = review.findings.length > 0 ? "awaiting-decision" : "drafting";
     this.persist(ctx);
+    this.appendReviewEntry();
 
     if (review.findings.length > 0) {
       return this.result(
@@ -513,11 +525,13 @@ export class ShipWorkflow {
     if (decisions.some((decision) => decision.action === "fix")) {
       this.run.stage = "fixing";
       this.persist(ctx);
+      this.appendReviewEntry();
       return this.result(this.buildFixPrompt());
     }
 
     this.run.stage = "drafting";
     this.persist(ctx);
+    this.appendReviewEntry();
     return this.result(this.buildDraftPrompt());
   }
 
@@ -728,7 +742,7 @@ export class ShipWorkflow {
           `### ${repository.name}\n\nSummary:\n${repository.summary ?? "Inspect the final diff."}\n\nTests:\n${testsMarkdown(repository.tests) || "- Not reported"}`,
       )
       .join("\n\n");
-    const reviews = [...(this.run.reviewHistory ?? []), ...(this.run.review ? [this.run.review] : [])]
+    const reviews = storedReviews(this.run)
       .map((review) => {
         const decisions = new Map(review.decisions?.map((decision) => [decision.findingId, decision]));
         const findings = review.result.findings.length === 0
@@ -746,12 +760,7 @@ export class ShipWorkflow {
   }
 
   private formatReview(): string {
-    if (!this.run?.review) return "No review result.";
-    const review = this.run.review.result;
-    const findings = review.findings.length > 0 ? review.findings.map(formatFinding).join("\n\n") : "No actionable findings.";
-    const risks = review.residualRisks.length > 0 ? review.residualRisks.map((risk) => `- ${risk}`).join("\n") : "- None reported";
-    const suggestedTests = review.suggestedTests.length > 0 ? review.suggestedTests.map((test) => `- ${test}`).join("\n") : "- None suggested";
-    return `## Independent workspace review — round ${this.run.review.round}\n\n${review.summary}\n\n${findings}\n\n## Residual risks\n\n${risks}\n\n## Suggested tests\n\n${suggestedTests}`;
+    return this.run?.review ? formatFullReview(this.run.review) : "No review result.";
   }
 
   private validateReports(
@@ -836,6 +845,14 @@ export class ShipWorkflow {
     return repository;
   }
 
+  private appendReviewEntry(): void {
+    if (!this.run?.review) return;
+    this.pi.appendEntry<ReviewEntryData>(REVIEW_ENTRY_TYPE, {
+      runId: this.run.id,
+      review: structuredClone(this.run.review),
+    });
+  }
+
   private sendPrompt(content: string): void {
     this.pi.sendMessage(
       { customType: "pi-ship", content, display: true, details: { runId: this.run?.id, stage: this.run?.stage } },
@@ -850,7 +867,7 @@ export class ShipWorkflow {
   private persist(ctx: ExtensionContext): void {
     if (!this.run) return;
     this.run.updatedAt = Date.now();
-    this.pi.appendEntry(STATE_ENTRY, this.run);
+    this.pi.appendEntry<ShipRun>(STATE_ENTRY, structuredClone(this.run));
     this.updateStatus(ctx);
   }
 
@@ -861,11 +878,13 @@ export class ShipWorkflow {
       return;
     }
     const changed = changedRepositories(this.run).length;
+    const latestReview = this.run.review ?? this.run.reviewHistory?.at(-1);
     ctx.ui.setStatus("pi-ship", `ship: ${this.run.stage} (${changed}/${this.run.repositories.length} repos)`);
     ctx.ui.setWidget(
       "pi-ship",
       [
         `Ship ${this.run.id.slice(0, 8)} — ${this.run.stage}`,
+        ...(latestReview ? [`  ${reviewHeadline(latestReview)}`] : []),
         ...this.run.repositories.map((repository) => `  ${repository.changed ? "●" : "○"} ${repository.name}`),
       ],
       { placement: "belowEditor" },
