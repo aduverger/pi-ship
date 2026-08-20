@@ -31,7 +31,7 @@ release:
 	git commit -m "Release $(VERSION)"
 	git push origin main
 	npm publish --access public --tag "$(NPM_TAG)" --registry="$(NPM_REGISTRY)"
-	@attempt=0; until test "$$(npm view "$(PACKAGE)@$(VERSION)" version --registry="$(NPM_REGISTRY)" 2>/dev/null)" = "$(VERSION)"; do attempt=$$((attempt + 1)); test $$attempt -lt 10 || { echo "Published version was not visible in the registry"; exit 1; }; sleep 3; done
+	@attempt=0; until test "$$(npm view "$(PACKAGE)@$(VERSION)" version --registry="$(NPM_REGISTRY)" --prefer-online 2>/dev/null)" = "$(VERSION)"; do attempt=$$((attempt + 1)); test $$attempt -lt 61 || { echo "Published version was not visible in the registry after 10 minutes"; exit 1; }; sleep 10; done
 	git tag -a "v$(VERSION)" -m "v$(VERSION)"
 	git push origin "v$(VERSION)"
 	@echo "Released $(PACKAGE)@$(VERSION) with npm tag $(NPM_TAG)"
