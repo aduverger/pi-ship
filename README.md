@@ -2,6 +2,8 @@
 
 Workspace-aware shipping workflow for the [Pi coding agent](https://pi.dev): rebase, simplify, independently review, test, push, and open cross-linked GitHub pull requests.
 
+![ship-it](https://media1.tenor.com/m/YEIeLVDQpxsAAAAC/shipping-ship.gif)
+
 ## Requirements
 
 - Pi 0.84 or newer
