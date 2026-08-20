@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -86,7 +86,7 @@ describe("repository discovery", () => {
     await initRepository(second);
     await initRepository(nested);
 
-    const canonicalWorkspace = await import("node:fs/promises").then(({ realpath }) => realpath(workspace));
+    const canonicalWorkspace = await realpath(workspace);
     const canonicalFirst = join(canonicalWorkspace, "first");
     const canonicalSecond = join(canonicalWorkspace, "second");
     const all = await discoverRepositoryPaths(runCommand, workspace, []);
@@ -96,7 +96,7 @@ describe("repository discovery", () => {
     const selected = await discoverRepositoryPaths(runCommand, workspace, ["second"]);
     expect(selected.repositories).toEqual([canonicalSecond]);
 
-    const fromRepo = await discoverRepositoryPaths(runCommand, join(first), []);
+    const fromRepo = await discoverRepositoryPaths(runCommand, first, []);
     expect(fromRepo).toEqual({ root: canonicalFirst, repositories: [canonicalFirst], workspace: false });
   });
 });

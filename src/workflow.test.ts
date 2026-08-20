@@ -6,7 +6,6 @@ import { promisify } from "node:util";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
-  ExtensionContext,
   SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";

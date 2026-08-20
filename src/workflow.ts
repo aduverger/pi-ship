@@ -59,12 +59,8 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function activeRepositories(run: ShipRun): ShipRepositoryState[] {
+function changedRepositories(run: ShipRun): ShipRepositoryState[] {
   return run.repositories.filter((repository) => repository.changed);
-}
-
-function reportMap(reports: readonly RepositoryReport[]): Map<string, RepositoryReport> {
-  return new Map(reports.map((report) => [report.repository, report]));
 }
 
 function testsMarkdown(tests: readonly TestExecution[]): string {
@@ -358,7 +354,7 @@ export class ShipWorkflow {
         : [];
     }
 
-    if (activeRepositories(this.run).length === 0) {
+    if (changedRepositories(this.run).length === 0) {
       this.run.stage = "complete";
       this.persist(ctx);
       return "No selected repository has a committed change against its default branch. Nothing was pushed and no pull request was created.";
@@ -403,9 +399,9 @@ export class ShipWorkflow {
   ): Promise<WorkflowResult> {
     if (!this.run || this.run.stage !== "simplifying") throw new Error("pi-ship is not in simplification stage.");
     if (!input.intent?.trim()) throw new Error("simplification-complete requires the workspace intent.");
-    const reports = this.validateReports(input.repositories, activeRepositories(this.run).map((repository) => repository.name));
+    const reports = this.validateReports(input.repositories, changedRepositories(this.run).map((repository) => repository.name));
 
-    for (const repository of activeRepositories(this.run)) {
+    for (const repository of changedRepositories(this.run)) {
       const currentHead = await requireGit(this.runCommand, repository.path, ["rev-parse", "HEAD"]);
       if (currentHead !== repository.head) throw new Error(`${repository.name} was committed during simplification; pi-ship owns commits.`);
       const allowed = new Set(repository.simplifyScope.map((file) => file.path));
@@ -416,7 +412,7 @@ export class ShipWorkflow {
     }
 
     this.run.intent = input.intent.trim();
-    for (const repository of activeRepositories(this.run)) {
+    for (const repository of changedRepositories(this.run)) {
       const report = reports.get(repository.name);
       if (!report) continue;
       repository.summary = report.summary;
@@ -468,7 +464,7 @@ export class ShipWorkflow {
       for (const relatedRepository of finding.relatedRepositories) this.repository(relatedRepository);
     }
 
-    for (const repository of activeRepositories(this.run)) {
+    for (const repository of changedRepositories(this.run)) {
       if (!(await isClean(this.runCommand, repository.path))) throw new Error(`Reviewer modified ${repository.name}.`);
       const head = await requireGit(this.runCommand, repository.path, ["rev-parse", "HEAD"]);
       if (head !== repository.head) throw new Error(`HEAD changed during review in ${repository.name}.`);
@@ -545,7 +541,7 @@ export class ShipWorkflow {
     }
     if (dirtyRepositories.length === 0) throw new Error("No review-fix changes were made.");
 
-    const requiredReports = [...new Set([...activeRepositories(this.run), ...dirtyRepositories].map((repository) => repository.name))];
+    const requiredReports = [...new Set([...changedRepositories(this.run), ...dirtyRepositories].map((repository) => repository.name))];
     const reports = this.validateReports(input.repositories, requiredReports);
     for (const repository of this.run.repositories) {
       const report = reports.get(repository.name);
@@ -562,10 +558,10 @@ export class ShipWorkflow {
   }
 
   private async publish(ctx: ExtensionContext, drafts: readonly PullRequestDraft[]): Promise<WorkflowResult> {
-    if (!this.run || this.run.stage !== "drafting" && this.run.stage !== "publishing") {
+    if (!this.run || (this.run.stage !== "drafting" && this.run.stage !== "publishing")) {
       throw new Error("pi-ship is not ready to publish.");
     }
-    const changed = activeRepositories(this.run);
+    const changed = changedRepositories(this.run);
     const byRepository = new Map(drafts.map((draft) => [draft.repository, draft]));
     if (byRepository.size !== drafts.length) throw new Error("PR drafts contain duplicate repositories.");
     for (const repository of changed) {
@@ -726,7 +722,7 @@ export class ShipWorkflow {
 
   private buildDraftPrompt(): string {
     if (!this.run?.intent) throw new Error("No ship intent is available.");
-    const repositories = activeRepositories(this.run)
+    const repositories = changedRepositories(this.run)
       .map(
         (repository) =>
           `### ${repository.name}\n\nSummary:\n${repository.summary ?? "Inspect the final diff."}\n\nTests:\n${testsMarkdown(repository.tests) || "- Not reported"}`,
@@ -754,8 +750,8 @@ export class ShipWorkflow {
     const review = this.run.review.result;
     const findings = review.findings.length > 0 ? review.findings.map(formatFinding).join("\n\n") : "No actionable findings.";
     const risks = review.residualRisks.length > 0 ? review.residualRisks.map((risk) => `- ${risk}`).join("\n") : "- None reported";
-    const tests = review.suggestedTests.length > 0 ? review.suggestedTests.map((test) => `- ${test}`).join("\n") : "- None suggested";
-    return `## Independent workspace review — round ${this.run.review.round}\n\n${review.summary}\n\n${findings}\n\n## Residual risks\n\n${risks}\n\n## Suggested tests\n\n${tests}`;
+    const suggestedTests = review.suggestedTests.length > 0 ? review.suggestedTests.map((test) => `- ${test}`).join("\n") : "- None suggested";
+    return `## Independent workspace review — round ${this.run.review.round}\n\n${review.summary}\n\n${findings}\n\n## Residual risks\n\n${risks}\n\n## Suggested tests\n\n${suggestedTests}`;
   }
 
   private validateReports(
@@ -763,7 +759,7 @@ export class ShipWorkflow {
     requiredRepositories: readonly string[],
   ): Map<string, RepositoryReport> {
     if (!reports) throw new Error("Repository reports are required.");
-    const reportsByName = reportMap(reports);
+    const reportsByName = new Map(reports.map((report) => [report.repository, report]));
     if (reportsByName.size !== reports.length) throw new Error("Repository reports contain duplicate names.");
     for (const name of requiredRepositories) {
       const report = reportsByName.get(name);
@@ -825,10 +821,12 @@ export class ShipWorkflow {
   }
 
   private archiveCurrentReview(): void {
-    if (!this.run?.review) return;
-    this.run.reviewHistory ??= [];
-    if (!this.run.reviewHistory.some((review) => review.completedAt === this.run?.review?.completedAt)) {
-      this.run.reviewHistory.push(this.run.review);
+    const run = this.run;
+    const review = run?.review;
+    if (!review) return;
+    run.reviewHistory ??= [];
+    if (!run.reviewHistory.some((archived) => archived.completedAt === review.completedAt)) {
+      run.reviewHistory.push(review);
     }
   }
 
@@ -862,7 +860,7 @@ export class ShipWorkflow {
       ctx.ui.setWidget("pi-ship", undefined);
       return;
     }
-    const changed = activeRepositories(this.run).length;
+    const changed = changedRepositories(this.run).length;
     ctx.ui.setStatus("pi-ship", `ship: ${this.run.stage} (${changed}/${this.run.repositories.length} repos)`);
     ctx.ui.setWidget(
       "pi-ship",
