@@ -659,12 +659,13 @@ export class ShipWorkflow {
   private async upsertPullRequest(repository: ShipRepositoryState, title: string, body: string): Promise<string> {
     const existing = await this.pi.exec(
       "gh",
-      ["pr", "list", "--repo", repository.githubRepository, "--head", repository.branch, "--state", "open", "--json", "number,url"],
+      ["pr", "list", "--repo", repository.githubRepository, "--head", repository.branch, "--state", "open", "--json", "number,url,isDraft"],
       { cwd: repository.path, timeout: 30_000 },
     );
     if (existing.code !== 0) throw new Error(`Could not list PRs for ${repository.name}: ${existing.stderr.trim()}`);
-    const pullRequests = JSON.parse(existing.stdout) as Array<{ number: number; url: string }>;
+    const pullRequests = JSON.parse(existing.stdout) as Array<{ number: number; url: string; isDraft: boolean }>;
     if (pullRequests[0]) {
+      if (!pullRequests[0].isDraft) await this.markPullRequestDraft(repository, pullRequests[0].number);
       await this.editPullRequest(repository, title, body, pullRequests[0].number);
       return pullRequests[0].url;
     }
@@ -675,6 +676,7 @@ export class ShipWorkflow {
         [
           "pr",
           "create",
+          "--draft",
           "--repo",
           repository.githubRepository,
           "--base",
@@ -691,6 +693,18 @@ export class ShipWorkflow {
       if (created.code !== 0) throw new Error(`Could not create PR for ${repository.name}: ${created.stderr.trim()}`);
       return created.stdout.trim();
     });
+  }
+
+  private async markPullRequestDraft(
+    repository: ShipRepositoryState,
+    number: number,
+  ): Promise<void> {
+    const result = await this.pi.exec(
+      "gh",
+      ["pr", "ready", String(number), "--undo", "--repo", repository.githubRepository],
+      { cwd: repository.path, timeout: 30_000 },
+    );
+    if (result.code !== 0) throw new Error(`Could not convert PR to draft for ${repository.name}: ${result.stderr.trim()}`);
   }
 
   private async editPullRequest(
@@ -743,21 +757,7 @@ export class ShipWorkflow {
           `### ${repository.name}\n\nSummary:\n${repository.summary ?? "Inspect the final diff."}\n\nTests:\n${testsMarkdown(repository.tests) || "- Not reported"}`,
       )
       .join("\n\n");
-    const reviews = storedReviews(this.run)
-      .map((review) => {
-        const decisions = new Map(review.decisions?.map((decision) => [decision.findingId, decision]));
-        const findings = review.result.findings.length === 0
-          ? "- No actionable findings"
-          : review.result.findings
-              .map((finding) => {
-                const decision = decisions.get(finding.id);
-                return `- ${finding.id} (${finding.repository}, ${finding.severity}): ${finding.title}${decision ? ` — ${decision.action}: ${decision.rationale}` : ""}`;
-              })
-              .join("\n");
-        return `Round ${review.round}: ${review.result.summary}\n${findings}`;
-      })
-      .join("\n\n");
-    return `Prepare one concise GitHub pull request title and body for every changed repository below. Each body must help a human reviewer who was not in this session and include: Intent, Changes, Decisions and tradeoffs, Cross-repository context, Independent review, Testing, and Risks or follow-ups. Explicitly mention review findings that were fixed, accepted, or deferred. Do not include secrets or the raw conversation. Do not ask for publication confirmation; /ship already authorized it. Call ship_report with action "publish" and all drafts.\n\n## Workspace intent\n\n${this.run.intent}\n\n## Review history\n\n${reviews || "No review history recorded."}\n\n${repositories}`;
+    return `Prepare one concise GitHub pull request title and body for every changed repository below. Each body must help a human reviewer who was not in this session and include: Intent, Changes, Decisions and tradeoffs, Cross-repository context, Testing, and Risks or follow-ups. Do not include an Independent review section, review history, finding dispositions, secrets, or the raw conversation. Do not ask for publication confirmation; /ship already authorized it. Call ship_report with action "publish" and all drafts.\n\n## Workspace intent\n\n${this.run.intent}\n\n${repositories}`;
   }
 
   private formatReview(): string {

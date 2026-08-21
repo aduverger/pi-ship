@@ -56,6 +56,7 @@ interface FakePiState {
   entries: Array<{ customType: string; data: unknown }>;
   messages: Array<{ content: string }>;
   commands: Array<{ command: string; args: string[] }>;
+  existingPullRequest?: { number: number; url: string; isDraft: boolean };
 }
 
 function fakePi(state: FakePiState): ExtensionAPI {
@@ -63,12 +64,17 @@ function fakePi(state: FakePiState): ExtensionAPI {
     state.commands.push({ command, args });
     if (command === "gh") {
       if (args[0] === "auth") return { stdout: "", stderr: "", code: 0, killed: false };
-      if (args[0] === "pr" && args[1] === "list") return { stdout: "[]", stderr: "", code: 0, killed: false };
+      if (args[0] === "pr" && args[1] === "list") {
+        const pullRequests = state.existingPullRequest ? [state.existingPullRequest] : [];
+        return { stdout: JSON.stringify(pullRequests), stderr: "", code: 0, killed: false };
+      }
       if (args[0] === "pr" && args[1] === "create") {
         const repository = args[args.indexOf("--repo") + 1];
         return { stdout: `https://github.com/${repository}/pull/1\n`, stderr: "", code: 0, killed: false };
       }
-      if (args[0] === "pr" && args[1] === "edit") return { stdout: "", stderr: "", code: 0, killed: false };
+      if (args[0] === "pr" && (args[1] === "edit" || args[1] === "ready")) {
+        return { stdout: "", stderr: "", code: 0, killed: false };
+      }
       throw new Error(`Unexpected gh command: ${args.join(" ")}`);
     }
     if (command === "git" && (args[0] === "fetch" || args[0] === "push")) {
@@ -216,6 +222,8 @@ describe("ShipWorkflow", () => {
     );
     expect(reviewed.content[0]?.text).toContain("No actionable findings");
     expect(reviewed.content[0]?.text).toContain("Call ship_report with action \"publish\"");
+    expect(reviewed.content[0]?.text).toContain("Do not include an Independent review section");
+    expect(reviewed.content[0]?.text).not.toContain("## Review history");
     expect(state.entries.some((entry) => entry.customType === "pi-ship-review")).toBe(true);
     expect(workflow.status(ctx)).toContain("Independent review round 1 — pass");
 
@@ -237,9 +245,77 @@ describe("ShipWorkflow", () => {
     expect(published.content[0]?.text).toContain("https://github.com/example/api/pull/1");
     const push = state.commands.find(({ command, args }) => command === "git" && args[0] === "push");
     expect(push?.args.some((argument) => argument.startsWith("--force-with-lease=refs/heads/feature:"))).toBe(true);
+    const createPullRequest = state.commands.find(
+      ({ command, args }) => command === "gh" && args[0] === "pr" && args[1] === "create",
+    );
+    expect(createPullRequest?.args).toContain("--draft");
     const finalRun = state.entries.at(-1)?.data as ShipRun;
     expect(finalRun.stage).toBe("complete");
     expect(finalRun.repositories.find(({ name }) => name === "frontend")?.pullRequestUrl).toBeUndefined();
+  });
+
+  it("converts an existing open PR back to draft", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-existing-pr-"));
+    await createClonedRepository(workspace, "api", true);
+    const state: FakePiState = {
+      entries: [],
+      messages: [],
+      commands: [],
+      existingPullRequest: {
+        number: 7,
+        url: "https://github.com/example/api/pull/7",
+        isDraft: false,
+      },
+    };
+    const reviewer = async () => ({
+      verdict: "pass" as const,
+      summary: "Review passed.",
+      findings: [],
+      residualRisks: [],
+      suggestedTests: [],
+    });
+    const workflow = new ShipWorkflow(fakePi(state), reviewer);
+    const ctx = fakeContext(workspace);
+    await workflow.start("", ctx);
+    await workflow.handleReport(
+      {
+        action: "simplification-complete",
+        intent: "Ship the API change.",
+        repositories: [
+          {
+            repository: "api",
+            summary: "Updated the API.",
+            tests: [{ command: "no test suite", status: "skipped", summary: "fixture repository" }],
+          },
+        ],
+      },
+      ctx,
+      undefined,
+    );
+
+    await workflow.handleReport(
+      {
+        action: "publish",
+        drafts: [{ repository: "api", title: "Update API", body: "## Intent\n\nUpdate API." }],
+      },
+      ctx,
+      undefined,
+    );
+
+    const markDraft = state.commands.find(
+      ({ command, args }) => command === "gh" && args[0] === "pr" && args[1] === "ready",
+    );
+    expect(markDraft?.args).toEqual([
+      "pr",
+      "ready",
+      "7",
+      "--undo",
+      "--repo",
+      "example/api",
+    ]);
+    expect(
+      state.commands.some(({ command, args }) => command === "gh" && args[0] === "pr" && args[1] === "create"),
+    ).toBe(false);
   });
 
   it("requires a user turn after review before accepting decisions", async () => {

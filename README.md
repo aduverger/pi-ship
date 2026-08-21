@@ -1,6 +1,6 @@
 # @aduverger/pi-ship
 
-Workspace-aware shipping workflow for the [Pi coding agent](https://pi.dev): rebase, simplify, independently review, test, push, and open cross-linked GitHub pull requests.
+Workspace-aware shipping workflow for the [Pi coding agent](https://pi.dev): rebase, simplify, independently review, test, push, and open cross-linked draft GitHub pull requests.
 
 ![ship-it](https://media1.tenor.com/m/YEIeLVDQpxsAAAAC/shipping-ship.gif)
 
@@ -70,7 +70,9 @@ Operational commands:
 6. Persist a visible repository-qualified findings summary in the active session branch and return the full review to the main agent for analysis and a user decision. Later review rounds receive prior accepted and deferred tradeoffs so they are not reported repeatedly.
 7. Apply approved fixes, test, commit, and independently review the complete workspace again.
 8. Verify that every pushed SHA exactly matches the reviewed SHA and that default branches have not advanced.
-9. Push all changed branches, create or update one PR per changed repository, and cross-link related PRs.
+9. Push all changed branches, create or update one draft PR per changed repository, and cross-link related PRs.
+
+Independent-review results stay in Pi and are not added as a dedicated PR section.
 
 Unchanged selected repositories remain available to the reviewer as integration context and do not produce commits or PRs unless an approved review fix changes them.
 
@@ -83,6 +85,7 @@ The changed-line simplification prompt is adapted from [MattDevy/pi-simplify](ht
 - Rebased existing branches use `--force-with-lease` against the observed remote SHA.
 - A moved default branch restarts rebase, simplification, and review before publication.
 - Partial push/PR failures are resumable with `/ship resume`.
+- New PRs are created as drafts, and existing ready PRs are converted back to draft before updates.
 - `/ship abort` aborts active rebases but preserves already completed rebases and commits.
 
 ## Development
