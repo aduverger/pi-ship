@@ -663,11 +663,11 @@ export class ShipWorkflow {
       { cwd: repository.path, timeout: 30_000 },
     );
     if (existing.code !== 0) throw new Error(`Could not list PRs for ${repository.name}: ${existing.stderr.trim()}`);
-    const pullRequests = JSON.parse(existing.stdout) as Array<{ number: number; url: string; isDraft: boolean }>;
-    if (pullRequests[0]) {
-      if (!pullRequests[0].isDraft) await this.markPullRequestDraft(repository, pullRequests[0].number);
-      await this.editPullRequest(repository, title, body, pullRequests[0].number);
-      return pullRequests[0].url;
+    const [pullRequest] = JSON.parse(existing.stdout) as Array<{ number: number; url: string; isDraft: boolean }>;
+    if (pullRequest) {
+      if (!pullRequest.isDraft) await this.markPullRequestDraft(repository, pullRequest.number);
+      await this.editPullRequest(repository, title, body, pullRequest.number);
+      return pullRequest.url;
     }
 
     return this.withBodyFile(body, async (bodyPath) => {

@@ -129,6 +129,36 @@ function fakeContext(
   } as unknown as ExtensionCommandContext;
 }
 
+const passingReviewer = async () => ({
+  verdict: "pass" as const,
+  summary: "Workspace contracts are consistent.",
+  findings: [],
+  residualRisks: [],
+  suggestedTests: [],
+});
+
+async function completeApiSimplification(
+  workflow: ShipWorkflow,
+  ctx: ExtensionCommandContext,
+  intent: string,
+) {
+  return workflow.handleReport(
+    {
+      action: "simplification-complete",
+      intent,
+      repositories: [
+        {
+          repository: "api",
+          summary: "Updated the API.",
+          tests: [{ command: "no test suite", status: "skipped", summary: "fixture repository" }],
+        },
+      ],
+    },
+    ctx,
+    undefined,
+  );
+}
+
 describe("ShipWorkflow", () => {
   it("rejects selected repositories checked out on their default branch", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "pi-ship-default-branch-"));
@@ -194,32 +224,11 @@ describe("ShipWorkflow", () => {
     await createClonedRepository(workspace, "api", true);
     await createClonedRepository(workspace, "frontend", false);
     const state: FakePiState = { entries: [], messages: [], commands: [] };
-    const reviewer = async () => ({
-      verdict: "pass" as const,
-      summary: "Workspace contracts are consistent.",
-      findings: [],
-      residualRisks: [],
-      suggestedTests: [],
-    });
-    const workflow = new ShipWorkflow(fakePi(state), reviewer);
+    const workflow = new ShipWorkflow(fakePi(state), passingReviewer);
     const ctx = fakeContext(workspace);
     await workflow.start("", ctx);
 
-    const reviewed = await workflow.handleReport(
-      {
-        action: "simplification-complete",
-        intent: "Ship the coordinated API change.",
-        repositories: [
-          {
-            repository: "api",
-            summary: "Updated the API.",
-            tests: [{ command: "no test suite", status: "skipped", summary: "fixture repository" }],
-          },
-        ],
-      },
-      ctx,
-      undefined,
-    );
+    const reviewed = await completeApiSimplification(workflow, ctx, "Ship the coordinated API change.");
     expect(reviewed.content[0]?.text).toContain("No actionable findings");
     expect(reviewed.content[0]?.text).toContain("Call ship_report with action \"publish\"");
     expect(reviewed.content[0]?.text).toContain("Do not include an Independent review section");
@@ -267,31 +276,10 @@ describe("ShipWorkflow", () => {
         isDraft: false,
       },
     };
-    const reviewer = async () => ({
-      verdict: "pass" as const,
-      summary: "Review passed.",
-      findings: [],
-      residualRisks: [],
-      suggestedTests: [],
-    });
-    const workflow = new ShipWorkflow(fakePi(state), reviewer);
+    const workflow = new ShipWorkflow(fakePi(state), passingReviewer);
     const ctx = fakeContext(workspace);
     await workflow.start("", ctx);
-    await workflow.handleReport(
-      {
-        action: "simplification-complete",
-        intent: "Ship the API change.",
-        repositories: [
-          {
-            repository: "api",
-            summary: "Updated the API.",
-            tests: [{ command: "no test suite", status: "skipped", summary: "fixture repository" }],
-          },
-        ],
-      },
-      ctx,
-      undefined,
-    );
+    await completeApiSimplification(workflow, ctx, "Ship the API change.");
 
     await workflow.handleReport(
       {
