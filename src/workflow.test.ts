@@ -372,6 +372,132 @@ describe("ShipWorkflow", () => {
     );
   });
 
+  it("validates every review-fix commit message before committing any repository", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-fix-commits-"));
+    const api = await createClonedRepository(workspace, "api", true);
+    const frontend = await createClonedRepository(workspace, "frontend", true);
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    let reviewRound = 0;
+    const reviewer = async () => {
+      reviewRound += 1;
+      if (reviewRound > 1) return passingReviewer();
+      return {
+        verdict: "findings" as const,
+        summary: "Two findings.",
+        findings: [
+          {
+            id: "API-1",
+            repository: "api",
+            severity: "warning" as const,
+            file: "file.txt",
+            title: "Fix API",
+            evidence: "API needs an update.",
+            impact: "API remains stale.",
+            recommendation: "Update API.",
+            confidence: "high" as const,
+            relatedRepositories: [],
+          },
+          {
+            id: "WEB-1",
+            repository: "frontend",
+            severity: "warning" as const,
+            file: "file.txt",
+            title: "Fix frontend",
+            evidence: "Frontend needs an update.",
+            impact: "Frontend remains stale.",
+            recommendation: "Update frontend.",
+            confidence: "high" as const,
+            relatedRepositories: [],
+          },
+        ],
+        residualRisks: [],
+        suggestedTests: [],
+      };
+    };
+    const workflow = new ShipWorkflow(fakePi(state), reviewer);
+    const ctx = fakeContext(workspace);
+    await workflow.start("", ctx);
+    await workflow.handleReport(
+      {
+        action: "simplification-complete",
+        intent: "Update API and frontend.",
+        repositories: [
+          {
+            repository: "api",
+            summary: "Updated API.",
+            tests: [{ command: "no tests", status: "skipped", summary: "fixture repository" }],
+          },
+          {
+            repository: "frontend",
+            summary: "Updated frontend.",
+            tests: [{ command: "no tests", status: "skipped", summary: "fixture repository" }],
+          },
+        ],
+      },
+      ctx,
+      undefined,
+    );
+
+    const userEntry = {
+      type: "message",
+      id: "user",
+      parentId: null,
+      timestamp: new Date(Date.now() + 60_000).toISOString(),
+      message: { role: "user", content: "Fix both", timestamp: Date.now() + 60_000 },
+    } as SessionEntry;
+    await workflow.handleReport(
+      {
+        action: "decision",
+        decisions: [
+          { findingId: "API-1", action: "fix", rationale: "Approved" },
+          { findingId: "WEB-1", action: "fix", rationale: "Approved" },
+        ],
+      },
+      fakeContext(workspace, [userEntry]),
+      undefined,
+    );
+    await writeFile(join(api, "file.txt"), "api fix\n", "utf8");
+    await writeFile(join(frontend, "file.txt"), "frontend fix\n", "utf8");
+
+    const reports = [
+      {
+        repository: "api",
+        summary: "Updated API.",
+        commitMessage: "fix: update API",
+        tests: [{ command: "no tests", status: "skipped" as const, summary: "fixture repository" }],
+      },
+      {
+        repository: "frontend",
+        summary: "Updated frontend.",
+        tests: [{ command: "no tests", status: "skipped" as const, summary: "fixture repository" }],
+      },
+    ];
+    await expect(
+      workflow.handleReport({ action: "fixes-complete", repositories: reports }, ctx, undefined),
+    ).rejects.toThrow("Review-fix report for frontend requires a commit message");
+    for (const repository of [api, frontend]) {
+      expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: repository }).then(({ stdout }) => stdout.trim())).toBe(
+        "change",
+      );
+    }
+
+    const reviewed = await workflow.handleReport(
+      {
+        action: "fixes-complete",
+        repositories: [reports[0]!, { ...reports[1]!, commitMessage: "fix: update frontend" }],
+      },
+      ctx,
+      undefined,
+    );
+    expect(reviewed.content[0]?.text).toContain("No actionable findings");
+    expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: api }).then(({ stdout }) => stdout.trim())).toBe(
+      "fix: update API",
+    );
+    expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: frontend }).then(({ stdout }) => stdout.trim())).toBe(
+      "fix: update frontend",
+    );
+  });
+
   it("requires a user turn after review before accepting decisions", async () => {
     const now = Date.now();
     const run: ShipRun = {

@@ -563,10 +563,13 @@ export class ShipWorkflow {
       if (!report) continue;
       repository.tests = report.tests;
     }
-    for (const repository of dirtyRepositories) {
+    const pendingCommits = dirtyRepositories.map((repository) => {
       const commitMessage = reports.get(repository.name)?.commitMessage?.trim();
       if (!commitMessage) throw new Error(`Review-fix report for ${repository.name} requires a commit message.`);
       if (commitMessage.includes("\n")) throw new Error(`Commit message for ${repository.name} must be one line.`);
+      return { repository, commitMessage };
+    });
+    for (const { repository, commitMessage } of pendingCommits) {
       await this.commitIfDirty(repository, commitMessage);
     }
     for (const repository of this.run.repositories) await this.refreshRepository(repository);
