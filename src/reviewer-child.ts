@@ -16,7 +16,7 @@ Look for concrete correctness bugs, security problems, regressions, contract mis
 
 An actionable finding must be realistic in normal supported use, grounded in this code, and worth the complexity of its remedy. Put scenarios that depend on unusual external state, concurrent actors outside the workflow, stale environmental metadata, configuration drift, or unsupported integrations in residual risks instead of findings. Severe hypothetical impact alone does not make an implausible scenario actionable. Report a low-probability security or data-loss issue only when the code exposes a direct, credible trigger. A maintainability finding must identify a concrete ongoing cost in the changed design, not a possible future abstraction. Prefer the smallest proportionate recommendation.
 
-Respect prior accepted and deferred findings in the supplied prompt unless the implementation materially changes their evidence or risk. Follow every ship_git continuation cursor until its output is complete. Do not report subjective style preferences. Every finding must cite specific evidence and impact. Submit exactly one final result through submit_review.`;
+Respect every prior user decision in the supplied prompt. For fixes, user rationale overrides conflicting original intent or reviewer recommendations and defines what to verify. Do not repeat accepted or deferred concerns unless the implementation materially changes their evidence or risk. Follow every ship_git continuation cursor until its output is complete. Do not report subjective style preferences. Every finding must cite specific evidence and impact. Submit exactly one final result through submit_review.`;
 
 function loadManifest(): ReviewerManifest {
   const path = process.env.PI_SHIP_REVIEW_MANIFEST;

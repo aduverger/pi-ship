@@ -135,7 +135,7 @@ export interface ReviewerPriorDecision {
   findingId: string;
   repository: string;
   title: string;
-  action: "accept" | "defer";
+  action: FindingDecision["action"];
   rationale: string;
 }
 

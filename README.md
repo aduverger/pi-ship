@@ -67,7 +67,7 @@ Operational commands:
 3. Fetch and rebase changed feature branches.
 4. Simplify the listed changed-feature files, using Git line ranges as guidance rather than hard edit boundaries, then test and commit per repository.
 5. Launch one fresh, read-only Pi reviewer over the complete selected workspace. It inherits the active model, always uses high thinking, can page through complete Git diffs, and focuses on concrete, proportionate correctness and maintainability findings.
-6. Persist a visible repository-qualified findings summary in the active session branch and return the full review to the main agent for analysis and a user decision. Later review rounds receive prior accepted and deferred tradeoffs so they are not reported repeatedly.
+6. Persist a visible repository-qualified findings summary in the active session branch and return the full review to the main agent for analysis and a user decision. Later review rounds receive every prior user decision and rationale so fixes are verified against updated guidance and accepted or deferred tradeoffs are not reported repeatedly.
 7. Apply approved fixes, test, commit, and independently review the complete workspace again.
 8. Verify that every pushed SHA exactly matches the reviewed SHA and that default branches have not advanced.
 9. Push all changed branches, create or update one draft PR per changed repository, and cross-link related PRs.

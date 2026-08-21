@@ -31,13 +31,12 @@ function reviewerExtensionPath(): string {
   return join(dirname(currentPath), `reviewer-child${extension}`);
 }
 
-export function collectReviewerPriorDecisions(
+export function collectReviewerDecisions(
   reviews: readonly StoredReview[],
 ): ReviewerPriorDecision[] {
   return reviews.flatMap((review) => {
     const findings = new Map(review.result.findings.map((finding) => [finding.id, finding]));
     return (review.decisions ?? []).flatMap((decision) => {
-      if (decision.action === "fix") return [];
       const finding = findings.get(decision.findingId);
       if (!finding) return [];
       return [{
@@ -79,11 +78,11 @@ ${manifest.intent}
 
 ${repositories}
 
-## Prior accepted or deferred findings
+## Prior user decisions and guidance
 
 ${priorDecisionSection}
 
-These are deliberate user decisions. Do not report the same concern again unless the implementation materially changes its evidence, likelihood, or impact. A recommendation must remain proportionate to the demonstrated risk.
+These decisions refine the original intent. For a fix decision, verify the implementation against its user rationale; the rationale overrides conflicting language in the original finding or intent. For an accept or defer decision, do not report the same concern again unless the implementation materially changes its evidence, likelihood, or impact. Every recommendation must remain proportionate to the demonstrated risk.
 
 Use ship_git to inspect every changed repository's summary, name-status, complete diff, and commit history. When ship_git returns a nextCursor, repeat the same request with that cursor until complete is true. Read surrounding implementation and selected unchanged repositories where needed. Check cross-repository contracts explicitly. Do not edit files. Finish by calling submit_review exactly once.`;
 }
