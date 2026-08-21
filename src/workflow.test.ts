@@ -56,7 +56,7 @@ interface FakePiState {
   entries: Array<{ customType: string; data: unknown }>;
   messages: Array<{ content: string }>;
   commands: Array<{ command: string; args: string[] }>;
-  existingPullRequest?: { number: number; url: string; isDraft: boolean };
+  existingPullRequest?: { number: number; url: string };
 }
 
 function fakePi(state: FakePiState): ExtensionAPI {
@@ -72,7 +72,7 @@ function fakePi(state: FakePiState): ExtensionAPI {
         const repository = args[args.indexOf("--repo") + 1];
         return { stdout: `https://github.com/${repository}/pull/1\n`, stderr: "", code: 0, killed: false };
       }
-      if (args[0] === "pr" && (args[1] === "edit" || args[1] === "ready")) {
+      if (args[0] === "pr" && args[1] === "edit") {
         return { stdout: "", stderr: "", code: 0, killed: false };
       }
       throw new Error(`Unexpected gh command: ${args.join(" ")}`);
@@ -263,7 +263,7 @@ describe("ShipWorkflow", () => {
     expect(finalRun.repositories.find(({ name }) => name === "frontend")?.pullRequestUrl).toBeUndefined();
   });
 
-  it("converts an existing open PR back to draft", async () => {
+  it("updates an existing PR without changing its readiness", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "pi-ship-existing-pr-"));
     await createClonedRepository(workspace, "api", true);
     const state: FakePiState = {
@@ -273,7 +273,6 @@ describe("ShipWorkflow", () => {
       existingPullRequest: {
         number: 7,
         url: "https://github.com/example/api/pull/7",
-        isDraft: false,
       },
     };
     const workflow = new ShipWorkflow(fakePi(state), passingReviewer);
@@ -290,20 +289,83 @@ describe("ShipWorkflow", () => {
       undefined,
     );
 
-    const markDraft = state.commands.find(
-      ({ command, args }) => command === "gh" && args[0] === "pr" && args[1] === "ready",
+    const pullRequestCommands = state.commands.filter(
+      ({ command, args }) => command === "gh" && args[0] === "pr",
     );
-    expect(markDraft?.args).toEqual([
-      "pr",
-      "ready",
-      "7",
-      "--undo",
-      "--repo",
-      "example/api",
-    ]);
-    expect(
-      state.commands.some(({ command, args }) => command === "gh" && args[0] === "pr" && args[1] === "create"),
-    ).toBe(false);
+    expect(pullRequestCommands.some(({ args }) => args[1] === "ready")).toBe(false);
+    expect(pullRequestCommands.some(({ args }) => args[1] === "create")).toBe(false);
+    expect(pullRequestCommands.some(({ args }) => args[1] === "edit")).toBe(true);
+  });
+
+  it("keeps review-fix annotations out of PR guidance", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-review-fix-summary-"));
+    const api = await createClonedRepository(workspace, "api", true);
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    let reviewRound = 0;
+    const reviewer = async () => {
+      reviewRound += 1;
+      if (reviewRound > 1) return passingReviewer();
+      return {
+        verdict: "findings" as const,
+        summary: "One finding.",
+        findings: [
+          {
+            id: "R1",
+            repository: "api",
+            severity: "warning" as const,
+            file: "file.txt",
+            title: "Fix the API fixture",
+            evidence: "The fixture needs an approved update.",
+            impact: "The fixture remains stale.",
+            recommendation: "Update the fixture.",
+            confidence: "high" as const,
+            relatedRepositories: [],
+          },
+        ],
+        residualRisks: [],
+        suggestedTests: [],
+      };
+    };
+    const workflow = new ShipWorkflow(fakePi(state), reviewer);
+    const ctx = fakeContext(workspace);
+    await workflow.start("", ctx);
+    await completeApiSimplification(workflow, ctx, "Ship the API change.");
+
+    const userEntry = {
+      type: "message",
+      id: "user",
+      parentId: null,
+      timestamp: new Date(Date.now() + 60_000).toISOString(),
+      message: { role: "user", content: "Fix R1", timestamp: Date.now() + 60_000 },
+    } as SessionEntry;
+    await workflow.handleReport(
+      {
+        action: "decision",
+        decisions: [{ findingId: "R1", action: "fix", rationale: "Approved" }],
+      },
+      fakeContext(workspace, [userEntry]),
+      undefined,
+    );
+
+    await writeFile(join(api, "file.txt"), "review fix\n", "utf8");
+    const reviewed = await workflow.handleReport(
+      {
+        action: "fixes-complete",
+        repositories: [
+          {
+            repository: "api",
+            summary: "Review fixes: addressed R1.",
+            tests: [{ command: "no test suite", status: "skipped", summary: "fixture repository" }],
+          },
+        ],
+      },
+      ctx,
+      undefined,
+    );
+
+    expect(reviewed.content[0]?.text).not.toContain("Review fixes: addressed R1");
+    expect(reviewed.content[0]?.text).not.toContain("## Review history");
+    expect(reviewed.content[0]?.text).toContain("Summary:\nUpdated the API.");
   });
 
   it("requires a user turn after review before accepting decisions", async () => {

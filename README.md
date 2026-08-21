@@ -85,7 +85,7 @@ The changed-line simplification prompt is adapted from [MattDevy/pi-simplify](ht
 - Rebased existing branches use `--force-with-lease` against the observed remote SHA.
 - A moved default branch restarts rebase, simplification, and review before publication.
 - Partial push/PR failures are resumable with `/ship resume`.
-- New PRs are created as drafts, and existing ready PRs are converted back to draft before updates.
+- New PRs are created as drafts; existing PRs preserve their current ready or draft state.
 - `/ship abort` aborts active rebases but preserves already completed rebases and commits.
 
 ## Development

@@ -561,7 +561,6 @@ export class ShipWorkflow {
     for (const repository of this.run.repositories) {
       const report = reports.get(repository.name);
       if (!report) continue;
-      repository.summary = [repository.summary, `Review fixes: ${report.summary}`].filter(Boolean).join("\n");
       repository.tests = report.tests;
     }
     for (const repository of dirtyRepositories) {
@@ -659,13 +658,12 @@ export class ShipWorkflow {
   private async upsertPullRequest(repository: ShipRepositoryState, title: string, body: string): Promise<string> {
     const existing = await this.pi.exec(
       "gh",
-      ["pr", "list", "--repo", repository.githubRepository, "--head", repository.branch, "--state", "open", "--json", "number,url,isDraft"],
+      ["pr", "list", "--repo", repository.githubRepository, "--head", repository.branch, "--state", "open", "--json", "number,url"],
       { cwd: repository.path, timeout: 30_000 },
     );
     if (existing.code !== 0) throw new Error(`Could not list PRs for ${repository.name}: ${existing.stderr.trim()}`);
-    const [pullRequest] = JSON.parse(existing.stdout) as Array<{ number: number; url: string; isDraft: boolean }>;
+    const [pullRequest] = JSON.parse(existing.stdout) as Array<{ number: number; url: string }>;
     if (pullRequest) {
-      if (!pullRequest.isDraft) await this.markPullRequestDraft(repository, pullRequest.number);
       await this.editPullRequest(repository, title, body, pullRequest.number);
       return pullRequest.url;
     }
@@ -693,18 +691,6 @@ export class ShipWorkflow {
       if (created.code !== 0) throw new Error(`Could not create PR for ${repository.name}: ${created.stderr.trim()}`);
       return created.stdout.trim();
     });
-  }
-
-  private async markPullRequestDraft(
-    repository: ShipRepositoryState,
-    number: number,
-  ): Promise<void> {
-    const result = await this.pi.exec(
-      "gh",
-      ["pr", "ready", String(number), "--undo", "--repo", repository.githubRepository],
-      { cwd: repository.path, timeout: 30_000 },
-    );
-    if (result.code !== 0) throw new Error(`Could not convert PR to draft for ${repository.name}: ${result.stderr.trim()}`);
   }
 
   private async editPullRequest(
