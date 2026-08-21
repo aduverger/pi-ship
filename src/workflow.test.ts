@@ -355,6 +355,7 @@ describe("ShipWorkflow", () => {
           {
             repository: "api",
             summary: "Review fixes: addressed R1.",
+            commitMessage: "fix: update API fixture",
             tests: [{ command: "no test suite", status: "skipped", summary: "fixture repository" }],
           },
         ],
@@ -366,6 +367,9 @@ describe("ShipWorkflow", () => {
     expect(reviewed.content[0]?.text).not.toContain("Review fixes: addressed R1");
     expect(reviewed.content[0]?.text).not.toContain("## Review history");
     expect(reviewed.content[0]?.text).toContain("Summary:\nUpdated the API.");
+    expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: api }).then(({ stdout }) => stdout.trim())).toBe(
+      "fix: update API fixture",
+    );
   });
 
   it("requires a user turn after review before accepting decisions", async () => {
@@ -446,6 +450,8 @@ describe("ShipWorkflow", () => {
       undefined,
     );
     expect(result.content[0]?.text).toContain("Apply only these user-approved review fixes");
+    expect(result.content[0]?.text).toContain("commitMessage");
+    expect(result.content[0]?.text).toContain("do not use generic review-workflow wording");
     const reviewEntry = state.entries.at(-1);
     expect(reviewEntry?.customType).toBe("pi-ship-review");
     expect(reviewEntry?.data).toMatchObject({ review: { decisions: decision.decisions } });

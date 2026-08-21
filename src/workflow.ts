@@ -564,7 +564,10 @@ export class ShipWorkflow {
       repository.tests = report.tests;
     }
     for (const repository of dirtyRepositories) {
-      await this.commitIfDirty(repository, "fix: address independent review findings");
+      const commitMessage = reports.get(repository.name)?.commitMessage?.trim();
+      if (!commitMessage) throw new Error(`Review-fix report for ${repository.name} requires a commit message.`);
+      if (commitMessage.includes("\n")) throw new Error(`Commit message for ${repository.name} must be one line.`);
+      await this.commitIfDirty(repository, commitMessage);
     }
     for (const repository of this.run.repositories) await this.refreshRepository(repository);
     this.persist(ctx);
@@ -732,7 +735,7 @@ export class ShipWorkflow {
         return `- ${decision.findingId} (${finding?.repository ?? "unknown"}): ${finding?.recommendation ?? ""}\n  User guidance: ${decision.rationale}`;
       })
       .join("\n");
-    return `Apply only these user-approved review fixes across the selected workspace:\n\n${fixes}\n\nRead surrounding and cross-repository code as needed. Do not commit. Run relevant tests in every changed repository, then call ship_report with action "fixes-complete" and repository reports containing exact test commands and outcomes.`;
+    return `Apply only these user-approved review fixes across the selected workspace:\n\n${fixes}\n\nRead surrounding and cross-repository code as needed. Do not commit. Run relevant tests in every changed repository, then call ship_report with action "fixes-complete" and repository reports containing exact test commands and outcomes. For every repository you edit, include a concise, one-line commitMessage describing the actual change (for example, "fix: preserve existing PR readiness"); do not use generic review-workflow wording.`;
   }
 
   private buildDraftPrompt(): string {

@@ -18,6 +18,7 @@ export interface TestExecution {
 export interface RepositoryReport {
   repository: string;
   summary: string;
+  commitMessage?: string;
   tests: TestExecution[];
 }
 
