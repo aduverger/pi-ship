@@ -232,6 +232,8 @@ describe("ShipWorkflow", () => {
     expect(reviewed.content[0]?.text).toContain("No actionable findings");
     expect(reviewed.content[0]?.text).toContain("Call ship_report with action \"publish\"");
     expect(reviewed.content[0]?.text).toContain("Do not include an Independent review section");
+    expect(reviewed.content[0]?.text).toContain("Include a Cross-repository context section only when");
+    expect(reviewed.content[0]?.text).toContain("omit it for a single-repository ship");
     expect(reviewed.content[0]?.text).not.toContain("## Review history");
     expect(state.entries.some((entry) => entry.customType === "pi-ship-review")).toBe(true);
     expect(workflow.status(ctx)).toContain("Independent review round 1 — pass");

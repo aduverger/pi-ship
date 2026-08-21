@@ -749,7 +749,7 @@ export class ShipWorkflow {
           `### ${repository.name}\n\nSummary:\n${repository.summary ?? "Inspect the final diff."}\n\nTests:\n${testsMarkdown(repository.tests) || "- Not reported"}`,
       )
       .join("\n\n");
-    return `Prepare one concise GitHub pull request title and body for every changed repository below. Each body must help a human reviewer who was not in this session and include: Intent, Changes, Decisions and tradeoffs, Cross-repository context, Testing, and Risks or follow-ups. Do not include an Independent review section, review history, finding dispositions, secrets, or the raw conversation. Do not ask for publication confirmation; /ship already authorized it. Call ship_report with action "publish" and all drafts.\n\n## Workspace intent\n\n${this.run.intent}\n\n${repositories}`;
+    return `Prepare one concise GitHub pull request title and body for every changed repository below. Each body must help a human reviewer who was not in this session and include: Intent, Changes, Decisions and tradeoffs, Testing, and Risks or follow-ups. Include a Cross-repository context section only when another selected repository materially affects the change, review, rollout, or testing; omit it for a single-repository ship or when there is no cross-repository context to flag. Do not include an Independent review section, review history, finding dispositions, secrets, or the raw conversation. Do not ask for publication confirmation; /ship already authorized it. Call ship_report with action "publish" and all drafts.\n\n## Workspace intent\n\n${this.run.intent}\n\n${repositories}`;
   }
 
   private formatReview(): string {
