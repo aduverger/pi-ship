@@ -20,6 +20,7 @@ const TestSchema = Type.Object({
 const RepositoryReportSchema = Type.Object({
   repository: Type.String(),
   summary: Type.String(),
+  commitMessage: Type.Optional(Type.String()),
   tests: Type.Array(TestSchema),
 });
 

@@ -28,7 +28,7 @@ import {
   reviewHeadline,
   type ReviewEntryData,
 } from "./review-display.js";
-import { collectReviewerPriorDecisions, runWorkspaceReviewer } from "./reviewer.js";
+import { collectReviewerDecisions, runWorkspaceReviewer } from "./reviewer.js";
 import { buildWorkspaceSimplificationPrompt } from "./simplify.js";
 import type {
   FindingDecision,
@@ -462,7 +462,7 @@ export class ShipWorkflow {
           branch: repository.branch,
           changed: repository.changed,
         })),
-        priorDecisions: collectReviewerPriorDecisions(storedReviews(this.run)),
+        priorDecisions: collectReviewerDecisions(storedReviews(this.run)),
       },
       signal,
       onProgress,
@@ -561,11 +561,16 @@ export class ShipWorkflow {
     for (const repository of this.run.repositories) {
       const report = reports.get(repository.name);
       if (!report) continue;
-      repository.summary = [repository.summary, `Review fixes: ${report.summary}`].filter(Boolean).join("\n");
       repository.tests = report.tests;
     }
-    for (const repository of dirtyRepositories) {
-      await this.commitIfDirty(repository, "fix: address independent review findings");
+    const pendingCommits = dirtyRepositories.map((repository) => {
+      const commitMessage = reports.get(repository.name)?.commitMessage?.trim();
+      if (!commitMessage) throw new Error(`Review-fix report for ${repository.name} requires a commit message.`);
+      if (commitMessage.includes("\n")) throw new Error(`Commit message for ${repository.name} must be one line.`);
+      return { repository, commitMessage };
+    });
+    for (const { repository, commitMessage } of pendingCommits) {
+      await this.commitIfDirty(repository, commitMessage);
     }
     for (const repository of this.run.repositories) await this.refreshRepository(repository);
     this.persist(ctx);
@@ -663,10 +668,10 @@ export class ShipWorkflow {
       { cwd: repository.path, timeout: 30_000 },
     );
     if (existing.code !== 0) throw new Error(`Could not list PRs for ${repository.name}: ${existing.stderr.trim()}`);
-    const pullRequests = JSON.parse(existing.stdout) as Array<{ number: number; url: string }>;
-    if (pullRequests[0]) {
-      await this.editPullRequest(repository, title, body, pullRequests[0].number);
-      return pullRequests[0].url;
+    const [pullRequest] = JSON.parse(existing.stdout) as Array<{ number: number; url: string }>;
+    if (pullRequest) {
+      await this.editPullRequest(repository, title, body, pullRequest.number);
+      return pullRequest.url;
     }
 
     return this.withBodyFile(body, async (bodyPath) => {
@@ -675,6 +680,7 @@ export class ShipWorkflow {
         [
           "pr",
           "create",
+          "--draft",
           "--repo",
           repository.githubRepository,
           "--base",
@@ -732,7 +738,7 @@ export class ShipWorkflow {
         return `- ${decision.findingId} (${finding?.repository ?? "unknown"}): ${finding?.recommendation ?? ""}\n  User guidance: ${decision.rationale}`;
       })
       .join("\n");
-    return `Apply only these user-approved review fixes across the selected workspace:\n\n${fixes}\n\nRead surrounding and cross-repository code as needed. Do not commit. Run relevant tests in every changed repository, then call ship_report with action "fixes-complete" and repository reports containing exact test commands and outcomes.`;
+    return `Apply only these user-approved review fixes across the selected workspace:\n\n${fixes}\n\nRead surrounding and cross-repository code as needed. Do not commit. Run relevant tests in every changed repository, then call ship_report with action "fixes-complete" and repository reports containing exact test commands and outcomes. For every repository you edit, include a concise, one-line commitMessage describing the actual change (for example, "fix: preserve existing PR readiness"); do not use generic review-workflow wording.`;
   }
 
   private buildDraftPrompt(): string {
@@ -743,21 +749,7 @@ export class ShipWorkflow {
           `### ${repository.name}\n\nSummary:\n${repository.summary ?? "Inspect the final diff."}\n\nTests:\n${testsMarkdown(repository.tests) || "- Not reported"}`,
       )
       .join("\n\n");
-    const reviews = storedReviews(this.run)
-      .map((review) => {
-        const decisions = new Map(review.decisions?.map((decision) => [decision.findingId, decision]));
-        const findings = review.result.findings.length === 0
-          ? "- No actionable findings"
-          : review.result.findings
-              .map((finding) => {
-                const decision = decisions.get(finding.id);
-                return `- ${finding.id} (${finding.repository}, ${finding.severity}): ${finding.title}${decision ? ` — ${decision.action}: ${decision.rationale}` : ""}`;
-              })
-              .join("\n");
-        return `Round ${review.round}: ${review.result.summary}\n${findings}`;
-      })
-      .join("\n\n");
-    return `Prepare one concise GitHub pull request title and body for every changed repository below. Each body must help a human reviewer who was not in this session and include: Intent, Changes, Decisions and tradeoffs, Cross-repository context, Independent review, Testing, and Risks or follow-ups. Explicitly mention review findings that were fixed, accepted, or deferred. Do not include secrets or the raw conversation. Do not ask for publication confirmation; /ship already authorized it. Call ship_report with action "publish" and all drafts.\n\n## Workspace intent\n\n${this.run.intent}\n\n## Review history\n\n${reviews || "No review history recorded."}\n\n${repositories}`;
+    return `Prepare one concise GitHub pull request title and body for every changed repository below. Each body must help a human reviewer who was not in this session and include: Intent, Changes, Decisions and tradeoffs, Testing, and Risks or follow-ups. Include a Cross-repository context section only when another selected repository materially affects the change, review, rollout, or testing; omit it for a single-repository ship or when there is no cross-repository context to flag. Do not include an Independent review section, review history, finding dispositions, secrets, or the raw conversation. Do not ask for publication confirmation; /ship already authorized it. Call ship_report with action "publish" and all drafts.\n\n## Workspace intent\n\n${this.run.intent}\n\n${repositories}`;
   }
 
   private formatReview(): string {

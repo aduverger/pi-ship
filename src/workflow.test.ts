@@ -56,6 +56,7 @@ interface FakePiState {
   entries: Array<{ customType: string; data: unknown }>;
   messages: Array<{ content: string }>;
   commands: Array<{ command: string; args: string[] }>;
+  existingPullRequest?: { number: number; url: string };
 }
 
 function fakePi(state: FakePiState): ExtensionAPI {
@@ -63,12 +64,17 @@ function fakePi(state: FakePiState): ExtensionAPI {
     state.commands.push({ command, args });
     if (command === "gh") {
       if (args[0] === "auth") return { stdout: "", stderr: "", code: 0, killed: false };
-      if (args[0] === "pr" && args[1] === "list") return { stdout: "[]", stderr: "", code: 0, killed: false };
+      if (args[0] === "pr" && args[1] === "list") {
+        const pullRequests = state.existingPullRequest ? [state.existingPullRequest] : [];
+        return { stdout: JSON.stringify(pullRequests), stderr: "", code: 0, killed: false };
+      }
       if (args[0] === "pr" && args[1] === "create") {
         const repository = args[args.indexOf("--repo") + 1];
         return { stdout: `https://github.com/${repository}/pull/1\n`, stderr: "", code: 0, killed: false };
       }
-      if (args[0] === "pr" && args[1] === "edit") return { stdout: "", stderr: "", code: 0, killed: false };
+      if (args[0] === "pr" && args[1] === "edit") {
+        return { stdout: "", stderr: "", code: 0, killed: false };
+      }
       throw new Error(`Unexpected gh command: ${args.join(" ")}`);
     }
     if (command === "git" && (args[0] === "fetch" || args[0] === "push")) {
@@ -121,6 +127,36 @@ function fakeContext(
       notify: () => {},
     },
   } as unknown as ExtensionCommandContext;
+}
+
+const passingReviewer = async () => ({
+  verdict: "pass" as const,
+  summary: "Workspace contracts are consistent.",
+  findings: [],
+  residualRisks: [],
+  suggestedTests: [],
+});
+
+async function completeApiSimplification(
+  workflow: ShipWorkflow,
+  ctx: ExtensionCommandContext,
+  intent: string,
+) {
+  return workflow.handleReport(
+    {
+      action: "simplification-complete",
+      intent,
+      repositories: [
+        {
+          repository: "api",
+          summary: "Updated the API.",
+          tests: [{ command: "no test suite", status: "skipped", summary: "fixture repository" }],
+        },
+      ],
+    },
+    ctx,
+    undefined,
+  );
 }
 
 describe("ShipWorkflow", () => {
@@ -188,34 +224,17 @@ describe("ShipWorkflow", () => {
     await createClonedRepository(workspace, "api", true);
     await createClonedRepository(workspace, "frontend", false);
     const state: FakePiState = { entries: [], messages: [], commands: [] };
-    const reviewer = async () => ({
-      verdict: "pass" as const,
-      summary: "Workspace contracts are consistent.",
-      findings: [],
-      residualRisks: [],
-      suggestedTests: [],
-    });
-    const workflow = new ShipWorkflow(fakePi(state), reviewer);
+    const workflow = new ShipWorkflow(fakePi(state), passingReviewer);
     const ctx = fakeContext(workspace);
     await workflow.start("", ctx);
 
-    const reviewed = await workflow.handleReport(
-      {
-        action: "simplification-complete",
-        intent: "Ship the coordinated API change.",
-        repositories: [
-          {
-            repository: "api",
-            summary: "Updated the API.",
-            tests: [{ command: "no test suite", status: "skipped", summary: "fixture repository" }],
-          },
-        ],
-      },
-      ctx,
-      undefined,
-    );
+    const reviewed = await completeApiSimplification(workflow, ctx, "Ship the coordinated API change.");
     expect(reviewed.content[0]?.text).toContain("No actionable findings");
     expect(reviewed.content[0]?.text).toContain("Call ship_report with action \"publish\"");
+    expect(reviewed.content[0]?.text).toContain("Do not include an Independent review section");
+    expect(reviewed.content[0]?.text).toContain("Include a Cross-repository context section only when");
+    expect(reviewed.content[0]?.text).toContain("omit it for a single-repository ship");
+    expect(reviewed.content[0]?.text).not.toContain("## Review history");
     expect(state.entries.some((entry) => entry.customType === "pi-ship-review")).toBe(true);
     expect(workflow.status(ctx)).toContain("Independent review round 1 — pass");
 
@@ -237,9 +256,248 @@ describe("ShipWorkflow", () => {
     expect(published.content[0]?.text).toContain("https://github.com/example/api/pull/1");
     const push = state.commands.find(({ command, args }) => command === "git" && args[0] === "push");
     expect(push?.args.some((argument) => argument.startsWith("--force-with-lease=refs/heads/feature:"))).toBe(true);
+    const createPullRequest = state.commands.find(
+      ({ command, args }) => command === "gh" && args[0] === "pr" && args[1] === "create",
+    );
+    expect(createPullRequest?.args).toContain("--draft");
     const finalRun = state.entries.at(-1)?.data as ShipRun;
     expect(finalRun.stage).toBe("complete");
     expect(finalRun.repositories.find(({ name }) => name === "frontend")?.pullRequestUrl).toBeUndefined();
+  });
+
+  it("updates an existing PR without changing its readiness", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-existing-pr-"));
+    await createClonedRepository(workspace, "api", true);
+    const state: FakePiState = {
+      entries: [],
+      messages: [],
+      commands: [],
+      existingPullRequest: {
+        number: 7,
+        url: "https://github.com/example/api/pull/7",
+      },
+    };
+    const workflow = new ShipWorkflow(fakePi(state), passingReviewer);
+    const ctx = fakeContext(workspace);
+    await workflow.start("", ctx);
+    await completeApiSimplification(workflow, ctx, "Ship the API change.");
+
+    await workflow.handleReport(
+      {
+        action: "publish",
+        drafts: [{ repository: "api", title: "Update API", body: "## Intent\n\nUpdate API." }],
+      },
+      ctx,
+      undefined,
+    );
+
+    const pullRequestCommands = state.commands.filter(
+      ({ command, args }) => command === "gh" && args[0] === "pr",
+    );
+    expect(pullRequestCommands.some(({ args }) => args[1] === "ready")).toBe(false);
+    expect(pullRequestCommands.some(({ args }) => args[1] === "create")).toBe(false);
+    expect(pullRequestCommands.some(({ args }) => args[1] === "edit")).toBe(true);
+  });
+
+  it("keeps review-fix annotations out of PR guidance", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-review-fix-summary-"));
+    const api = await createClonedRepository(workspace, "api", true);
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    let reviewRound = 0;
+    const reviewer = async () => {
+      reviewRound += 1;
+      if (reviewRound > 1) return passingReviewer();
+      return {
+        verdict: "findings" as const,
+        summary: "One finding.",
+        findings: [
+          {
+            id: "R1",
+            repository: "api",
+            severity: "warning" as const,
+            file: "file.txt",
+            title: "Fix the API fixture",
+            evidence: "The fixture needs an approved update.",
+            impact: "The fixture remains stale.",
+            recommendation: "Update the fixture.",
+            confidence: "high" as const,
+            relatedRepositories: [],
+          },
+        ],
+        residualRisks: [],
+        suggestedTests: [],
+      };
+    };
+    const workflow = new ShipWorkflow(fakePi(state), reviewer);
+    const ctx = fakeContext(workspace);
+    await workflow.start("", ctx);
+    await completeApiSimplification(workflow, ctx, "Ship the API change.");
+
+    const userEntry = {
+      type: "message",
+      id: "user",
+      parentId: null,
+      timestamp: new Date(Date.now() + 60_000).toISOString(),
+      message: { role: "user", content: "Fix R1", timestamp: Date.now() + 60_000 },
+    } as SessionEntry;
+    await workflow.handleReport(
+      {
+        action: "decision",
+        decisions: [{ findingId: "R1", action: "fix", rationale: "Approved" }],
+      },
+      fakeContext(workspace, [userEntry]),
+      undefined,
+    );
+
+    await writeFile(join(api, "file.txt"), "review fix\n", "utf8");
+    const reviewed = await workflow.handleReport(
+      {
+        action: "fixes-complete",
+        repositories: [
+          {
+            repository: "api",
+            summary: "Review fixes: addressed R1.",
+            commitMessage: "fix: update API fixture",
+            tests: [{ command: "no test suite", status: "skipped", summary: "fixture repository" }],
+          },
+        ],
+      },
+      ctx,
+      undefined,
+    );
+
+    expect(reviewed.content[0]?.text).not.toContain("Review fixes: addressed R1");
+    expect(reviewed.content[0]?.text).not.toContain("## Review history");
+    expect(reviewed.content[0]?.text).toContain("Summary:\nUpdated the API.");
+    expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: api }).then(({ stdout }) => stdout.trim())).toBe(
+      "fix: update API fixture",
+    );
+  });
+
+  it("validates every review-fix commit message before committing any repository", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-fix-commits-"));
+    const api = await createClonedRepository(workspace, "api", true);
+    const frontend = await createClonedRepository(workspace, "frontend", true);
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    let reviewRound = 0;
+    const reviewer = async () => {
+      reviewRound += 1;
+      if (reviewRound > 1) return passingReviewer();
+      return {
+        verdict: "findings" as const,
+        summary: "Two findings.",
+        findings: [
+          {
+            id: "API-1",
+            repository: "api",
+            severity: "warning" as const,
+            file: "file.txt",
+            title: "Fix API",
+            evidence: "API needs an update.",
+            impact: "API remains stale.",
+            recommendation: "Update API.",
+            confidence: "high" as const,
+            relatedRepositories: [],
+          },
+          {
+            id: "WEB-1",
+            repository: "frontend",
+            severity: "warning" as const,
+            file: "file.txt",
+            title: "Fix frontend",
+            evidence: "Frontend needs an update.",
+            impact: "Frontend remains stale.",
+            recommendation: "Update frontend.",
+            confidence: "high" as const,
+            relatedRepositories: [],
+          },
+        ],
+        residualRisks: [],
+        suggestedTests: [],
+      };
+    };
+    const workflow = new ShipWorkflow(fakePi(state), reviewer);
+    const ctx = fakeContext(workspace);
+    await workflow.start("", ctx);
+    await workflow.handleReport(
+      {
+        action: "simplification-complete",
+        intent: "Update API and frontend.",
+        repositories: [
+          {
+            repository: "api",
+            summary: "Updated API.",
+            tests: [{ command: "no tests", status: "skipped", summary: "fixture repository" }],
+          },
+          {
+            repository: "frontend",
+            summary: "Updated frontend.",
+            tests: [{ command: "no tests", status: "skipped", summary: "fixture repository" }],
+          },
+        ],
+      },
+      ctx,
+      undefined,
+    );
+
+    const userEntry = {
+      type: "message",
+      id: "user",
+      parentId: null,
+      timestamp: new Date(Date.now() + 60_000).toISOString(),
+      message: { role: "user", content: "Fix both", timestamp: Date.now() + 60_000 },
+    } as SessionEntry;
+    await workflow.handleReport(
+      {
+        action: "decision",
+        decisions: [
+          { findingId: "API-1", action: "fix", rationale: "Approved" },
+          { findingId: "WEB-1", action: "fix", rationale: "Approved" },
+        ],
+      },
+      fakeContext(workspace, [userEntry]),
+      undefined,
+    );
+    await writeFile(join(api, "file.txt"), "api fix\n", "utf8");
+    await writeFile(join(frontend, "file.txt"), "frontend fix\n", "utf8");
+
+    const reports = [
+      {
+        repository: "api",
+        summary: "Updated API.",
+        commitMessage: "fix: update API",
+        tests: [{ command: "no tests", status: "skipped" as const, summary: "fixture repository" }],
+      },
+      {
+        repository: "frontend",
+        summary: "Updated frontend.",
+        tests: [{ command: "no tests", status: "skipped" as const, summary: "fixture repository" }],
+      },
+    ];
+    await expect(
+      workflow.handleReport({ action: "fixes-complete", repositories: reports }, ctx, undefined),
+    ).rejects.toThrow("Review-fix report for frontend requires a commit message");
+    for (const repository of [api, frontend]) {
+      expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: repository }).then(({ stdout }) => stdout.trim())).toBe(
+        "change",
+      );
+    }
+
+    const reviewed = await workflow.handleReport(
+      {
+        action: "fixes-complete",
+        repositories: [reports[0]!, { ...reports[1]!, commitMessage: "fix: update frontend" }],
+      },
+      ctx,
+      undefined,
+    );
+    expect(reviewed.content[0]?.text).toContain("No actionable findings");
+    expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: api }).then(({ stdout }) => stdout.trim())).toBe(
+      "fix: update API",
+    );
+    expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: frontend }).then(({ stdout }) => stdout.trim())).toBe(
+      "fix: update frontend",
+    );
   });
 
   it("requires a user turn after review before accepting decisions", async () => {
@@ -320,6 +578,8 @@ describe("ShipWorkflow", () => {
       undefined,
     );
     expect(result.content[0]?.text).toContain("Apply only these user-approved review fixes");
+    expect(result.content[0]?.text).toContain("commitMessage");
+    expect(result.content[0]?.text).toContain("do not use generic review-workflow wording");
     const reviewEntry = state.entries.at(-1);
     expect(reviewEntry?.customType).toBe("pi-ship-review");
     expect(reviewEntry?.data).toMatchObject({ review: { decisions: decision.decisions } });

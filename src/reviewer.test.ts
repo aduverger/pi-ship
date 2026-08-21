@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReviewPrompt, collectReviewerPriorDecisions } from "./reviewer.js";
+import { buildReviewPrompt, collectReviewerDecisions } from "./reviewer.js";
 import type { ReviewerManifest, StoredReview } from "./types.js";
 
 const review: StoredReview = {
@@ -57,8 +57,8 @@ const review: StoredReview = {
 };
 
 describe("reviewer context", () => {
-  it("passes accepted and deferred decisions but keeps fixed findings reviewable", () => {
-    expect(collectReviewerPriorDecisions([review])).toEqual([
+  it("passes every user decision and rationale", () => {
+    expect(collectReviewerDecisions([review])).toEqual([
       {
         round: 1,
         findingId: "ACCEPTED",
@@ -75,6 +75,14 @@ describe("reviewer context", () => {
         action: "defer",
         rationale: "Follow-up work",
       },
+      {
+        round: 1,
+        findingId: "FIXED",
+        repository: "api",
+        title: "Fixed bug",
+        action: "fix",
+        rationale: "Fix now",
+      },
     ]);
   });
 
@@ -83,13 +91,13 @@ describe("reviewer context", () => {
       root: "/workspace",
       intent: "Ship the feature",
       repositories: [],
-      priorDecisions: collectReviewerPriorDecisions([review]),
+      priorDecisions: collectReviewerDecisions([review]),
     };
     const prompt = buildReviewPrompt(manifest);
 
     expect(prompt).toContain("ACCEPTED (api): Accepted tradeoff");
     expect(prompt).toContain("DEFERRED (frontend): Deferred work");
-    expect(prompt).not.toContain("FIXED");
-    expect(prompt).toContain("Do not report the same concern again");
+    expect(prompt).toContain("FIXED (api): Fixed bug");
+    expect(prompt).toContain("the rationale overrides conflicting language");
   });
 });
