@@ -66,12 +66,12 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function changedRepositories(run: ShipRun): ShipRepositoryState[] {
-  return run.repositories.filter((repository) => !repository.contextOnly && repository.changed);
-}
-
 function reviewRepositories(run: ShipRun): ShipRepositoryState[] {
   return run.repositories.filter((repository) => !repository.contextOnly);
+}
+
+function changedRepositories(run: ShipRun): ShipRepositoryState[] {
+  return reviewRepositories(run).filter((repository) => repository.changed);
 }
 
 function testsMarkdown(tests: readonly TestExecution[]): string {

@@ -63,9 +63,9 @@ Operational commands:
 
 ## Workflow
 
-1. Validate that every selected repository is clean and committed. A default-branch repository is allowed only when its `HEAD` exactly matches the fetched remote default branch; it becomes workspace context/config only.
-2. Resolve each repository's default branch independently of its configured upstream.
-3. Fetch and rebase changed feature branches.
+1. Validate that every selected repository is clean and committed.
+2. Fetch each origin and resolve its default branch independently of the configured upstream.
+3. Keep a default-branch repository only when its `HEAD` exactly matches the fetched remote, classifying it as workspace context/config; rebase changed feature branches.
 4. Simplify the listed changed-feature files, using Git line ranges as guidance rather than hard edit boundaries, then test and commit per repository.
 5. Launch one fresh, read-only Pi reviewer over the complete selected workspace. It inherits the active model, always uses high thinking, can page through complete Git diffs, and focuses on concrete, proportionate correctness and maintainability findings.
 6. Persist a visible repository-qualified findings summary in the active session branch and return the full review to the main agent for analysis and a user decision. Later review rounds receive every prior user decision and rationale so fixes are verified against updated guidance and accepted or deferred tradeoffs are not reported repeatedly.
