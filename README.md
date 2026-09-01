@@ -9,7 +9,8 @@ Workspace-aware shipping workflow for the [Pi coding agent](https://pi.dev): reb
 - Pi 0.84 or newer
 - Git
 - GitHub CLI (`gh`), authenticated for `github.com`
-- Clean, committed feature branches in every selected repository, including review-only context repositories
+- Clean, committed feature branches in repositories included in simplify/review
+- Clean default branches synchronized with `origin` in workspace context/config repositories
 
 ## Install
 
@@ -62,9 +63,9 @@ Operational commands:
 
 ## Workflow
 
-1. Validate that every selected repository is clean, committed, and checked out on a non-default feature branch.
-2. Resolve each repository's default branch independently of its configured upstream.
-3. Fetch and rebase changed feature branches.
+1. Validate that every selected repository is clean and committed.
+2. Fetch each origin and resolve its default branch independently of the configured upstream.
+3. Keep a default-branch repository only when its `HEAD` exactly matches the fetched remote, classifying it as workspace context/config; rebase changed feature branches.
 4. Simplify the listed changed-feature files, using Git line ranges as guidance rather than hard edit boundaries, then test and commit per repository.
 5. Launch one fresh, read-only Pi reviewer over the complete selected workspace. It inherits the active model, always uses high thinking, can page through complete Git diffs, and focuses on concrete, proportionate correctness and maintainability findings.
 6. Persist a visible repository-qualified findings summary in the active session branch and return the full review to the main agent for analysis and a user decision. Later review rounds receive every prior user decision and rationale so fixes are verified against updated guidance and accepted or deferred tradeoffs are not reported repeatedly.
@@ -74,13 +75,13 @@ Operational commands:
 
 Independent-review results stay in Pi and are not added as a dedicated PR section.
 
-Unchanged selected repositories remain available to the reviewer as integration context and do not produce commits or PRs unless an approved review fix changes them.
+Unchanged feature-branch repositories remain available to the reviewer as integration context and do not produce commits or PRs unless an approved review fix changes them. Default-branch context/config repositories remain available in the workspace but are excluded from simplification and independent review, and must stay unmodified throughout the run.
 
 The changed-line simplification prompt is adapted from [MattDevy/pi-simplify](https://github.com/MattDevy/pi-extensions/tree/main/packages/pi-simplify). See [NOTICE.md](NOTICE.md).
 
 ## Safety properties
 
-- No dirty or default-branch repository enters the workflow.
+- No dirty repository enters the workflow; default-branch repositories must exactly match their fetched remote and remain immutable workspace context.
 - Reviewer subprocess has no bash, edit, or write tools.
 - Rebased existing branches use `--force-with-lease` against the observed remote SHA.
 - A moved default branch restarts rebase, simplification, and review before publication.

@@ -66,8 +66,12 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function reviewRepositories(run: ShipRun): ShipRepositoryState[] {
+  return run.repositories.filter((repository) => !repository.contextOnly);
+}
+
 function changedRepositories(run: ShipRun): ShipRepositoryState[] {
-  return run.repositories.filter((repository) => repository.changed);
+  return reviewRepositories(run).filter((repository) => repository.changed);
 }
 
 function testsMarkdown(tests: readonly TestExecution[]): string {
@@ -104,6 +108,7 @@ export class ShipWorkflow {
       const entry = branch[index];
       if (entry?.type === "custom" && entry.customType === STATE_ENTRY && isStoredRun(entry.data)) {
         this.run = structuredClone(entry.data);
+        for (const repository of this.run.repositories) repository.contextOnly ??= false;
         break;
       }
     }
@@ -179,7 +184,10 @@ export class ShipWorkflow {
     if (!this.run) return "No /ship run is recorded in this session.";
     const lines = [`Ship ${this.run.id.slice(0, 8)}: ${this.run.stage}`];
     for (const repository of this.run.repositories) {
-      const labels = [repository.changed ? "changed" : "context"];
+      let role = "review context";
+      if (repository.contextOnly) role = "workspace context";
+      else if (repository.changed) role = "changed";
+      const labels = [role];
       if (repository.reviewedHead === repository.head) labels.push("reviewed");
       if (repository.pushed) labels.push("pushed");
       if (repository.pullRequestUrl) labels.push(repository.pullRequestUrl);
@@ -291,10 +299,13 @@ export class ShipWorkflow {
     const initialHead = await requireGit(this.runCommand, path, ["rev-parse", "HEAD"]);
     const baseSha = await requireGit(this.runCommand, path, ["rev-parse", baseRef]);
     const remoteBranch = await git(this.runCommand, path, ["rev-parse", "--verify", `refs/remotes/origin/${branch}`]);
-    const changed = await hasChangesAgainstBase(this.runCommand, path, baseRef);
-    if (branch === baseBranch) {
-      throw new Error(`${basename(path)} is checked out on its default branch ${baseBranch}; every selected repository must use a feature branch.`);
+    const contextOnly = branch === baseBranch;
+    if (contextOnly && initialHead !== baseSha) {
+      throw new Error(
+        `${basename(path)} is checked out on its default branch ${baseBranch} but does not exactly match ${baseRef}; default-branch context repositories cannot contain committed changes.`,
+      );
     }
+    const changed = contextOnly ? false : await hasChangesAgainstBase(this.runCommand, path, baseRef);
 
     return {
       name: basename(path),
@@ -307,6 +318,7 @@ export class ShipWorkflow {
       head: initialHead,
       baseSha,
       ...(remoteBranch.code === 0 ? { remoteBranchSha: remoteBranch.stdout.trim() } : {}),
+      contextOnly,
       changed,
       simplifyScope: [],
       tests: [],
@@ -358,7 +370,8 @@ export class ShipWorkflow {
       await this.refreshRepository(repository);
     }
 
-    for (const repository of this.run.repositories) {
+    await this.assertContextRepositoriesUnmodified("before simplification");
+    for (const repository of reviewRepositories(this.run)) {
       await this.refreshRepository(repository);
       repository.simplifyScope = repository.changed
         ? await collectChangedFiles(this.runCommand, repository.path, repository.baseRef)
@@ -411,6 +424,7 @@ export class ShipWorkflow {
     if (!this.run || this.run.stage !== "simplifying") throw new Error("pi-ship is not in simplification stage.");
     if (!input.intent?.trim()) throw new Error("simplification-complete requires the workspace intent.");
     const reports = this.validateReports(input.repositories, changedRepositories(this.run).map((repository) => repository.name));
+    await this.assertContextRepositoriesUnmodified("during simplification");
 
     for (const repository of changedRepositories(this.run)) {
       const currentHead = await requireGit(this.runCommand, repository.path, ["rev-parse", "HEAD"]);
@@ -441,7 +455,8 @@ export class ShipWorkflow {
     onProgress?: ProgressCallback,
   ): Promise<WorkflowResult> {
     if (!this.run || !this.run.intent) throw new Error("Cannot review without an active run and intent.");
-    for (const repository of this.run.repositories) {
+    await this.assertContextRepositoriesUnmodified("before review");
+    for (const repository of reviewRepositories(this.run)) {
       if (!(await isClean(this.runCommand, repository.path))) throw new Error(`${repository.name} is dirty before review.`);
       await this.refreshRepository(repository);
     }
@@ -454,7 +469,7 @@ export class ShipWorkflow {
       {
         root: this.run.root,
         intent: this.run.intent,
-        repositories: this.run.repositories.map((repository) => ({
+        repositories: reviewRepositories(this.run).map((repository) => ({
           name: repository.name,
           path: repository.path,
           baseRef: repository.baseRef,
@@ -469,11 +484,18 @@ export class ShipWorkflow {
     );
 
     const ids = new Set<string>();
+    const reviewedNames = new Set(reviewRepositories(this.run).map((repository) => repository.name));
     for (const finding of review.findings) {
       if (ids.has(finding.id)) throw new Error(`Reviewer returned duplicate finding id ${finding.id}.`);
       ids.add(finding.id);
-      this.repository(finding.repository);
-      for (const relatedRepository of finding.relatedRepositories) this.repository(relatedRepository);
+      if (!reviewedNames.has(finding.repository)) {
+        throw new Error(`Reviewer returned finding for excluded context repository ${finding.repository}.`);
+      }
+      for (const relatedRepository of finding.relatedRepositories) {
+        if (!reviewedNames.has(relatedRepository)) {
+          throw new Error(`Reviewer related a finding to excluded context repository ${relatedRepository}.`);
+        }
+      }
     }
 
     for (const repository of changedRepositories(this.run)) {
@@ -546,8 +568,9 @@ export class ShipWorkflow {
       throw new Error("pi-ship is not in the review-fix stage.");
     }
 
+    await this.assertContextRepositoriesUnmodified("during review fixes");
     const dirtyRepositories: ShipRepositoryState[] = [];
-    for (const repository of this.run.repositories) {
+    for (const repository of reviewRepositories(this.run)) {
       const head = await requireGit(this.runCommand, repository.path, ["rev-parse", "HEAD"]);
       if (repository.changed && head !== repository.reviewedHead) {
         throw new Error(`${repository.name} was committed during review fixes; pi-ship owns commits.`);
@@ -558,7 +581,7 @@ export class ShipWorkflow {
 
     const requiredReports = [...new Set([...changedRepositories(this.run), ...dirtyRepositories].map((repository) => repository.name))];
     const reports = this.validateReports(input.repositories, requiredReports);
-    for (const repository of this.run.repositories) {
+    for (const repository of reviewRepositories(this.run)) {
       const report = reports.get(repository.name);
       if (!report) continue;
       repository.tests = report.tests;
@@ -572,7 +595,7 @@ export class ShipWorkflow {
     for (const { repository, commitMessage } of pendingCommits) {
       await this.commitIfDirty(repository, commitMessage);
     }
-    for (const repository of this.run.repositories) await this.refreshRepository(repository);
+    for (const repository of reviewRepositories(this.run)) await this.refreshRepository(repository);
     this.persist(ctx);
     return this.performReview(ctx, signal, onProgress);
   }
@@ -592,6 +615,7 @@ export class ShipWorkflow {
       if (!this.repository(name).changed) throw new Error(`PR draft supplied for unchanged repository ${name}.`);
     }
 
+    await this.assertContextRepositoriesUnmodified("before publication");
     this.run.drafts = [...drafts];
     this.run.stage = "publishing";
     this.persist(ctx);
@@ -785,6 +809,20 @@ export class ShipWorkflow {
       if (entry.type !== "message" || entry.message.role !== "user") return false;
       return entry.message.timestamp > completedAt;
     });
+  }
+
+  private async assertContextRepositoriesUnmodified(phase: string): Promise<void> {
+    if (!this.run) throw new Error("No active run.");
+    for (const repository of this.run.repositories) {
+      if (!repository.contextOnly) continue;
+      if (!(await isClean(this.runCommand, repository.path))) {
+        throw new Error(`${repository.name} default-branch context repository is dirty ${phase}.`);
+      }
+      const head = await requireGit(this.runCommand, repository.path, ["rev-parse", "HEAD"]);
+      if (head !== repository.initialHead) {
+        throw new Error(`${repository.name} default-branch context repository has committed changes ${phase}.`);
+      }
+    }
   }
 
   private async refreshRepository(repository: ShipRepositoryState): Promise<void> {

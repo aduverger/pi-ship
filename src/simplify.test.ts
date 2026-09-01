@@ -13,6 +13,7 @@ function repository(overrides: Partial<ShipRepositoryState> = {}): ShipRepositor
     initialHead: "a",
     head: "a",
     baseSha: "b",
+    contextOnly: false,
     changed: true,
     simplifyScope: [
       { path: "src/changed.ts", status: "modified", changedLines: [{ start: 4, end: 8 }] },
