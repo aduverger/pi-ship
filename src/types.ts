@@ -80,6 +80,7 @@ export interface ShipRepositoryState {
   head: string;
   baseSha: string;
   remoteBranchSha?: string;
+  contextOnly: boolean;
   changed: boolean;
   simplifyScope: ChangedFile[];
   summary?: string;

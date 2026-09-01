@@ -10,7 +10,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import type { CommandOptions, CommandResult } from "./git.js";
-import type { ShipRun } from "./types.js";
+import type { ReviewerManifest, ShipRun } from "./types.js";
 import { ShipWorkflow } from "./workflow.js";
 
 const execFileAsync = promisify(execFile);
@@ -160,14 +160,49 @@ async function completeApiSimplification(
 }
 
 describe("ShipWorkflow", () => {
-  it("rejects selected repositories checked out on their default branch", async () => {
-    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-default-branch-"));
-    await createClonedRepository(workspace, "api", false, "main");
+  it("allows a clean synchronized default branch as workspace context", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-default-context-"));
+    await createClonedRepository(workspace, "config", false, "main");
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    const workflow = new ShipWorkflow(fakePi(state));
+    const ctx = fakeContext(workspace);
+
+    await workflow.start("", ctx);
+
+    const stored = state.entries.at(-1)?.data as ShipRun;
+    expect(stored.stage).toBe("complete");
+    expect(stored.repositories[0]).toMatchObject({
+      name: "config",
+      branch: "main",
+      changed: false,
+      contextOnly: true,
+    });
+    expect(workflow.status(ctx)).toContain("workspace context");
+  });
+
+  it("rejects committed changes on a default-branch context repository", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-default-commits-"));
+    const config = await createClonedRepository(workspace, "config", false, "main");
+    await writeFile(join(config, "file.txt"), "local change\n", "utf8");
+    await git(config, ["add", "."]);
+    await git(config, ["commit", "-m", "local change"]);
     const state: FakePiState = { entries: [], messages: [], commands: [] };
     const workflow = new ShipWorkflow(fakePi(state));
 
     await expect(workflow.start("", fakeContext(workspace))).rejects.toThrow(
-      "api is checked out on its default branch main",
+      "default-branch context repositories cannot contain committed changes",
+    );
+  });
+
+  it("rejects uncommitted changes on a default-branch context repository", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-default-dirty-"));
+    const config = await createClonedRepository(workspace, "config", false, "main");
+    await writeFile(join(config, "file.txt"), "uncommitted change\n", "utf8");
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    const workflow = new ShipWorkflow(fakePi(state));
+
+    await expect(workflow.start("", fakeContext(workspace))).rejects.toThrow(
+      "Every selected repository must be clean and committed. Dirty: config",
     );
   });
 
@@ -222,9 +257,14 @@ describe("ShipWorkflow", () => {
   it("reviews, force-with-lease pushes, and publishes without a final confirmation", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "pi-ship-publish-"));
     await createClonedRepository(workspace, "api", true);
-    await createClonedRepository(workspace, "frontend", false);
+    await createClonedRepository(workspace, "frontend", false, "main");
     const state: FakePiState = { entries: [], messages: [], commands: [] };
-    const workflow = new ShipWorkflow(fakePi(state), passingReviewer);
+    let reviewerManifest: ReviewerManifest | undefined;
+    const reviewer = async (_ctx: unknown, manifest: ReviewerManifest) => {
+      reviewerManifest = manifest;
+      return passingReviewer();
+    };
+    const workflow = new ShipWorkflow(fakePi(state), reviewer);
     const ctx = fakeContext(workspace);
     await workflow.start("", ctx);
 
@@ -237,6 +277,7 @@ describe("ShipWorkflow", () => {
     expect(reviewed.content[0]?.text).not.toContain("## Review history");
     expect(state.entries.some((entry) => entry.customType === "pi-ship-review")).toBe(true);
     expect(workflow.status(ctx)).toContain("Independent review round 1 — pass");
+    expect(reviewerManifest?.repositories.map(({ name }) => name)).toEqual(["api"]);
 
     const published = await workflow.handleReport(
       {
@@ -547,6 +588,7 @@ describe("ShipWorkflow", () => {
       initialHead: "head",
       head: "head",
       baseSha: "base",
+      contextOnly: false,
       changed: true,
       simplifyScope: [],
       tests: [],
