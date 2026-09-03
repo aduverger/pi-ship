@@ -340,7 +340,7 @@ describe("ShipWorkflow", () => {
     expect(pullRequestCommands.some(({ args }) => args[1] === "edit")).toBe(true);
   });
 
-  it("keeps review-fix annotations out of PR guidance", async () => {
+  it("presents findings with context and keeps review-fix annotations out of PR guidance", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "pi-ship-review-fix-summary-"));
     const api = await createClonedRepository(workspace, "api", true);
     const state: FakePiState = { entries: [], messages: [], commands: [] };
@@ -546,7 +546,7 @@ describe("ShipWorkflow", () => {
     );
   });
 
-  it("requires a user turn after review before accepting decisions", async () => {
+  it("repeats decision guidance on resume and requires a user response", async () => {
     const now = Date.now();
     const run: ShipRun = {
       version: 1,

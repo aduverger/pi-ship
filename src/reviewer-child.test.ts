@@ -23,7 +23,7 @@ function readAllPages(output: string): { reconstructed: string; pages: number } 
 }
 
 describe("reviewer policy", () => {
-  it("keeps unlikely environmental scenarios out of actionable findings", () => {
+  it("requires concrete, proportionate findings", () => {
     expect(REVIEW_SYSTEM_PROMPT).toContain("realistic in normal supported use");
     expect(REVIEW_SYSTEM_PROMPT).toContain("configuration drift");
     expect(REVIEW_SYSTEM_PROMPT).toContain("in residual risks instead of findings");
