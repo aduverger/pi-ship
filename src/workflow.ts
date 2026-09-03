@@ -42,6 +42,12 @@ import type {
 } from "./types.js";
 
 const STATE_ENTRY = "pi-ship-state";
+const REVIEW_DECISION_GUIDANCE = `Analyze every finding against the code and intent. Assume the user planned the work but has not read the implementation, and do not merely repeat the structured review fields.
+
+Start with "Background you need first": a concise explanation of the feature, relevant architecture and data flow, and domain concepts needed to assess the findings. Then present each finding separately. For each one, explain the intended behavior, the concrete problem and evidence in plain language, the realistic impact and why it matters, the proposed fix, and your recommended disposition—fix, accept, or defer—with rationale and tradeoffs. Define project-specific terms, connect affected components end to end, and include a focused code excerpt when it materially clarifies the issue. Keep the presentation concise but self-contained for someone who has not read the code.
+
+Then stop. Do not call ship_report with action decision until the user explicitly responds.`;
+
 const ACTIVE_STAGES = new Set<ShipRun["stage"]>([
   "preflight",
   "rebasing",
@@ -221,7 +227,7 @@ export class ShipWorkflow {
         prompt = (await this.performReview(ctx)).content[0]?.text;
         break;
       case "awaiting-decision":
-        prompt = `${this.formatReview()}\n\nAnalyze these findings, recommend a disposition for each, and wait for the user's explicit decision.`;
+        prompt = `${this.formatReview()}\n\n${REVIEW_DECISION_GUIDANCE}`;
         break;
       case "fixing":
         prompt = this.buildFixPrompt();
@@ -518,9 +524,7 @@ export class ShipWorkflow {
     this.appendReviewEntry();
 
     if (review.findings.length > 0) {
-      return this.result(
-        `${this.formatReview()}\n\nAnalyze every finding against the code and intent. Present your recommended disposition—fix, accept, or defer—and then stop. Do not call ship_report with action decision until the user explicitly responds.`,
-      );
+      return this.result(`${this.formatReview()}\n\n${REVIEW_DECISION_GUIDANCE}`);
     }
     return this.result(`${this.formatReview()}\n\n${this.buildDraftPrompt()}`);
   }
