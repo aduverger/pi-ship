@@ -372,7 +372,12 @@ describe("ShipWorkflow", () => {
     const workflow = new ShipWorkflow(fakePi(state), reviewer);
     const ctx = fakeContext(workspace);
     await workflow.start("", ctx);
-    await completeApiSimplification(workflow, ctx, "Ship the API change.");
+    const awaitingDecision = await completeApiSimplification(workflow, ctx, "Ship the API change.");
+    expect(awaitingDecision.content[0]?.text).toContain("Background you need first");
+    expect(awaitingDecision.content[0]?.text).toContain("has not read the implementation");
+    expect(awaitingDecision.content[0]?.text).toContain("the intended behavior");
+    expect(awaitingDecision.content[0]?.text).toContain("recommended disposition—fix, accept, or defer");
+    expect(awaitingDecision.content[0]?.text).toContain("rationale and tradeoffs");
 
     const userEntry = {
       type: "message",
@@ -597,7 +602,11 @@ describe("ShipWorkflow", () => {
     const storedEntry = { type: "custom", customType: "pi-ship-state", data: run } as SessionEntry;
     const state: FakePiState = { entries: [], messages: [], commands: [] };
     const workflow = new ShipWorkflow(fakePi(state));
-    workflow.restore(fakeContext("/workspace", [storedEntry]));
+    const reviewContext = fakeContext("/workspace", [storedEntry]);
+    workflow.restore(reviewContext);
+    await workflow.resume(reviewContext);
+    expect(state.messages.at(-1)?.content).toContain("Background you need first");
+    expect(state.messages.at(-1)?.content).toContain("self-contained for someone who has not read the code");
     const decision = {
       action: "decision" as const,
       decisions: [{ findingId: "R1", action: "fix" as const, rationale: "approved" }],

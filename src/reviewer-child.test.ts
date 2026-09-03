@@ -27,6 +27,9 @@ describe("reviewer policy", () => {
     expect(REVIEW_SYSTEM_PROMPT).toContain("realistic in normal supported use");
     expect(REVIEW_SYSTEM_PROMPT).toContain("configuration drift");
     expect(REVIEW_SYSTEM_PROMPT).toContain("in residual risks instead of findings");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("Do not invent requirements");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("solely for hypothetical edge cases");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("demonstrated maintenance or correctness risk");
     expect(REVIEW_SYSTEM_PROMPT).toContain("smallest proportionate recommendation");
   });
 });
