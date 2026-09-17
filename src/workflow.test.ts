@@ -305,6 +305,41 @@ describe("ShipWorkflow", () => {
     expect(workflow.status(fakeContext("/workspace"))).toBe("No /ship run is recorded in this session.");
   });
 
+  it("renders auto-review progress in the existing banner only while reviewing", () => {
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    const workflow = new ShipWorkflow(fakePi(state));
+    const run: ShipRun = {
+      version: 1,
+      id: "12345678-run",
+      root: "/workspace",
+      stage: "testing",
+      createdAt: 1,
+      updatedAt: 1,
+      auto: true,
+      repositories: [],
+      rebaseIndex: 0,
+    };
+    const branch = [{ type: "custom", customType: "pi-ship-state", data: run }] as SessionEntry[];
+    const footerStatuses: Array<string | undefined> = [];
+    const banners: Array<readonly string[] | undefined> = [];
+    const ctx = {
+      sessionManager: { getBranch: () => branch },
+      ui: {
+        setStatus: (_key: string, value: string | undefined) => footerStatuses.push(value),
+        setWidget: (_key: string, value: readonly string[] | undefined) => banners.push(value),
+      },
+    } as unknown as ExtensionCommandContext;
+
+    workflow.restore(ctx);
+    expect(footerStatuses).toEqual([undefined]);
+    expect(banners.at(-1)?.[0]).toBe("Ship 12345678 — testing");
+
+    run.stage = "reviewing";
+    workflow.restore(ctx);
+    expect(footerStatuses).toEqual([undefined, undefined]);
+    expect(banners.at(-1)?.[0]).toBe("Ship 12345678 — reviewing (auto review 0/5)");
+  });
+
   it("discovers a workspace, rebases changed repos, and prompts scoped simplification", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "pi-ship-flow-"));
     const api = await createClonedRepository(workspace, "api", true);

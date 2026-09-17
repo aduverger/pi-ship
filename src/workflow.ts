@@ -1105,19 +1105,19 @@ export class ShipWorkflow {
   }
 
   private updateStatus(ctx: ExtensionContext): void {
+    ctx.ui.setStatus("pi-ship", undefined);
     if (!this.run || !ACTIVE_STAGES.has(this.run.stage)) {
-      ctx.ui.setStatus("pi-ship", undefined);
       ctx.ui.setWidget("pi-ship", undefined);
       return;
     }
-    const changed = changedRepositories(this.run).length;
     const latestReview = this.run.review ?? this.run.reviewHistory?.at(-1);
-    const mode = this.run.auto ? `, auto review ${latestReviewRound(this.run)}/${AUTO_REVIEW_LIMIT}` : "";
-    ctx.ui.setStatus("pi-ship", `ship: ${this.run.stage} (${changed}/${this.run.repositories.length} repos${mode})`);
+    const autoReview = this.run.auto && this.run.stage === "reviewing"
+      ? ` (auto review ${latestReviewRound(this.run)}/${AUTO_REVIEW_LIMIT})`
+      : "";
     ctx.ui.setWidget(
       "pi-ship",
       [
-        `Ship ${this.run.id.slice(0, 8)} — ${this.run.stage}`,
+        `Ship ${this.run.id.slice(0, 8)} — ${this.run.stage}${autoReview}`,
         ...(latestReview ? [`  ${reviewHeadline(latestReview)}`] : []),
         ...this.run.repositories.map((repository) => `  ${repository.changed ? "●" : "○"} ${repository.name}`),
       ],
