@@ -63,7 +63,7 @@ Operational commands:
 /ship abort
 ```
 
-`/ship` is the publication consent boundary. The workflow asks for user input only when independent-review findings require a decision or when conflict resolution requires semantic guidance. Once the approved final changes pass review, it pushes branches and creates or updates PRs without another confirmation.
+`/ship` is the publication consent boundary. The workflow asks for user input only when independent-review findings require a decision, conflict resolution requires semantic guidance, or test curation encounters ambiguous behavior or production work outside the original feature scope. Once the approved final changes pass review, it pushes branches and creates or updates PRs without another confirmation.
 
 ## Workflow
 
