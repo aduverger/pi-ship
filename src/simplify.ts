@@ -1,6 +1,6 @@
 import type { ChangedFile, ShipRepositoryState } from "./types.js";
 
-function formatFile(file: ChangedFile): string {
+export function formatChangedFile(file: ChangedFile): string {
   if (file.status === "added") return `- ${file.path} (added; entire file is in scope)`;
   if (file.changedLines === undefined) {
     return `- ${file.path} (${file.status}; changed lines unavailable — inspect git diff before editing)`;
@@ -14,7 +14,7 @@ function formatFile(file: ChangedFile): string {
 }
 
 export function buildRepositorySimplificationPrompt(repository: ShipRepositoryState): string {
-  const fileList = repository.simplifyScope.map(formatFile).join("\n");
+  const fileList = repository.simplifyScope.map(formatChangedFile).join("\n");
   return `### ${repository.name}
 
 Repository root: ${repository.path}
@@ -27,7 +27,7 @@ export function buildWorkspaceSimplificationPrompt(repositories: readonly ShipRe
   const changedRepositories = repositories.filter((repository) => repository.changed);
   const scopes = changedRepositories.map(buildRepositorySimplificationPrompt).join("\n\n");
 
-  return `The /ship workflow has rebased every changed repository. Simplify the committed changes below and prepare the workspace for independent review.
+  return `The /ship workflow has rebased every changed repository. Simplify the committed changes below before test curation and independent review.
 
 First derive a concise workspace intent from the conversation: the user's goal, requirements, constraints, accepted decisions, and important tradeoffs. Preserve that intent for the reviewer and pull requests.
 
@@ -49,7 +49,7 @@ ${scopes}
 1. Work through each changed repository and file.
 2. Apply only concrete simplifications within the listed scope.
 3. Do not commit; pi-ship owns commits.
-4. Run the relevant existing tests in every changed repository. If no suitable test exists, report it as skipped with a reason.
+4. Run focused existing tests needed to validate the simplification in every changed repository. If no suitable test exists, report it as skipped with a reason.
 5. Call ship_report with action "simplification-complete", the workspace intent, and one repository report per changed repository. Include every test command and outcome.
 
 Do not add features, change public APIs, or refactor files that are not listed. If a worthwhile simplification requires an out-of-scope file edit, leave it alone and mention it in that repository's summary.`;

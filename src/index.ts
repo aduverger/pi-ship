@@ -17,11 +17,21 @@ const TestSchema = Type.Object({
   summary: Type.Optional(Type.String()),
 });
 
+const TestCurationSchema = Type.Object({
+  added: Type.Integer({ minimum: 0 }),
+  rewritten: Type.Integer({ minimum: 0 }),
+  consolidated: Type.Integer({ minimum: 0 }),
+  removed: Type.Integer({ minimum: 0 }),
+  behaviors: Type.Array(Type.String()),
+  remainingGaps: Type.Array(Type.String()),
+});
+
 const RepositoryReportSchema = Type.Object({
   repository: Type.String(),
   summary: Type.String(),
   commitMessage: Type.Optional(Type.String()),
   tests: Type.Array(TestSchema),
+  testCuration: Type.Optional(TestCurationSchema),
 });
 
 const DecisionSchema = Type.Object({
@@ -40,6 +50,7 @@ const ShipReportSchema = Type.Object({
   action: StringEnum([
     "conflict-resolved",
     "simplification-complete",
+    "testing-complete",
     "decision",
     "fixes-complete",
     "publish",
@@ -78,7 +89,7 @@ export default function piShip(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("ship", {
-    description: "Rebase, simplify, independently review, and publish one repo or a workspace",
+    description: "Rebase, simplify, curate tests, independently review, and publish one repo or a workspace",
     handler: async (args, ctx) => {
       const command = args.trim();
       try {
@@ -105,7 +116,7 @@ export default function piShip(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "ship_report",
     label: "Ship Report",
-    description: "Advance the active /ship workflow with structured simplification, review-decision, fix, or PR data.",
+    description: "Advance the active /ship workflow with structured simplification, test-curation, review-decision, fix, or PR data.",
     executionMode: "sequential",
     parameters: ShipReportSchema,
     async execute(_toolCallId, params, signal, onUpdate, ctx) {

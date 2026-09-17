@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import type {
   ExtensionAPI,
@@ -57,6 +57,7 @@ interface FakePiState {
   messages: Array<{ content: string }>;
   commands: Array<{ command: string; args: string[] }>;
   existingPullRequest?: { number: number; url: string; isDraft?: boolean };
+  failCommitOnceIn?: string;
 }
 
 function latestRun(state: FakePiState): ShipRun {
@@ -95,6 +96,10 @@ function fakePi(state: FakePiState): ExtensionAPI {
     }
     if (command === "git" && (args[0] === "fetch" || args[0] === "push")) {
       return { stdout: "", stderr: "", code: 0, killed: false };
+    }
+    if (command === "git" && args[0] === "commit" && basename(options?.cwd ?? "") === state.failCommitOnceIn) {
+      delete state.failCommitOnceIn;
+      return { stdout: "", stderr: "commit hook failed", code: 1, killed: false };
     }
     try {
       const result = await execFileAsync(command, args, {
@@ -174,7 +179,7 @@ const blockingReviewer = async () => ({
   suggestedTests: [],
 });
 
-async function completeApiSimplification(
+async function reportApiSimplification(
   workflow: ShipWorkflow,
   ctx: ExtensionCommandContext,
   intent: string,
@@ -188,6 +193,36 @@ async function completeApiSimplification(
           repository: "api",
           summary: "Updated the API.",
           tests: [{ command: "no test suite", status: "skipped", summary: "fixture repository" }],
+        },
+      ],
+    },
+    ctx,
+    undefined,
+  );
+}
+
+async function completeApiPreparation(
+  workflow: ShipWorkflow,
+  ctx: ExtensionCommandContext,
+  intent: string,
+) {
+  await reportApiSimplification(workflow, ctx, intent);
+  return workflow.handleReport(
+    {
+      action: "testing-complete",
+      repositories: [
+        {
+          repository: "api",
+          summary: "Updated the API.",
+          tests: [{ command: "no test suite", status: "skipped", summary: "fixture repository" }],
+          testCuration: {
+            added: 0,
+            rewritten: 0,
+            consolidated: 0,
+            removed: 0,
+            behaviors: ["API contract"],
+            remainingGaps: [],
+          },
         },
       ],
     },
@@ -291,6 +326,134 @@ describe("ShipWorkflow", () => {
     ]);
   });
 
+  it("curates and commits tests between simplification and independent review", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-testing-"));
+    const api = await createClonedRepository(workspace, "api", true);
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    let reviewerManifest: ReviewerManifest | undefined;
+    const reviewer = async (_ctx: unknown, manifest: ReviewerManifest) => {
+      reviewerManifest = manifest;
+      return passingReviewer();
+    };
+    const workflow = new ShipWorkflow(fakePi(state), reviewer);
+    const ctx = fakeContext(workspace);
+    await workflow.start("", ctx);
+
+    const testing = await reportApiSimplification(workflow, ctx, "Ship the API change.");
+    expect(testing.content[0]?.text).toContain("durable confidence");
+    expect(testing.content[0]?.text).toContain("behavior-preserving refactor");
+    expect(latestRun(state).stage).toBe("testing");
+
+    await writeFile(join(api, "file.test.ts"), "export {};\n", "utf8");
+    const report = {
+      action: "testing-complete" as const,
+      repositories: [
+        {
+          repository: "api",
+          summary: "Updated the API and added contract coverage.",
+          tests: [{ command: "no test suite", status: "skipped" as const, summary: "fixture repository" }],
+          testCuration: {
+            added: 1,
+            rewritten: 0,
+            consolidated: 0,
+            removed: 0,
+            behaviors: ["API contract"],
+            remainingGaps: [],
+          },
+        },
+      ],
+    };
+    await expect(workflow.handleReport(report, ctx, undefined)).rejects.toThrow(
+      "Test report for api requires a commit message",
+    );
+
+    const reviewed = await workflow.handleReport(
+      {
+        ...report,
+        repositories: [{ ...report.repositories[0]!, commitMessage: "test: cover API contract" }],
+      },
+      ctx,
+      undefined,
+    );
+
+    expect(reviewed.content[0]?.text).toContain("No actionable findings");
+    expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: api }).then(({ stdout }) => stdout.trim())).toBe(
+      "test: cover API contract",
+    );
+    expect(reviewerManifest?.repositories[0]?.testCuration).toMatchObject({ added: 1, removed: 0 });
+  });
+
+  it("resumes test-curation commits after a later repository commit fails", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-testing-resume-"));
+    const api = await createClonedRepository(workspace, "api", true);
+    const frontend = await createClonedRepository(workspace, "frontend", true);
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    const ctx = fakeContext(workspace);
+    const workflow = new ShipWorkflow(fakePi(state), passingReviewer);
+    await workflow.start("", ctx);
+    await workflow.handleReport(
+      {
+        action: "simplification-complete",
+        intent: "Update API and frontend coverage.",
+        repositories: ["api", "frontend"].map((repository) => ({
+          repository,
+          summary: `Updated ${repository}.`,
+          tests: [{ command: "no tests", status: "skipped" as const, summary: "fixture repository" }],
+        })),
+      },
+      ctx,
+      undefined,
+    );
+
+    await writeFile(join(api, "file.test.ts"), "export {};\n", "utf8");
+    await writeFile(join(frontend, "file.test.ts"), "export {};\n", "utf8");
+    const reports = ["api", "frontend"].map((repository) => ({
+      repository,
+      summary: `Updated ${repository} with contract coverage.`,
+      commitMessage: `test: cover ${repository} contract`,
+      tests: [{ command: "no tests", status: "skipped" as const, summary: "fixture repository" }],
+      testCuration: {
+        added: 1,
+        rewritten: 0,
+        consolidated: 0,
+        removed: 0,
+        behaviors: [`${repository} contract`],
+        remainingGaps: [],
+      },
+    }));
+    state.failCommitOnceIn = "frontend";
+
+    await expect(
+      workflow.handleReport({ action: "testing-complete", repositories: reports }, ctx, undefined),
+    ).rejects.toThrow("commit hook failed");
+    expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: api }).then(({ stdout }) => stdout.trim())).toBe(
+      "test: cover api contract",
+    );
+    expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: frontend }).then(({ stdout }) => stdout.trim())).toBe(
+      "change",
+    );
+
+    const storedEntry = {
+      type: "custom",
+      customType: "pi-ship-state",
+      data: structuredClone(latestRun(state)),
+    } as SessionEntry;
+    const resumed = new ShipWorkflow(fakePi(state), passingReviewer);
+    const resumedContext = fakeContext(workspace, [storedEntry]);
+    resumed.restore(resumedContext);
+    await resumed.resume(resumedContext);
+
+    const reviewed = await resumed.handleReport(
+      { action: "testing-complete", repositories: reports },
+      resumedContext,
+      undefined,
+    );
+    expect(reviewed.content[0]?.text).toContain("No actionable findings");
+    expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: frontend }).then(({ stdout }) => stdout.trim())).toBe(
+      "test: cover frontend contract",
+    );
+  });
+
   it("persists auto mode and applies agent decisions without a user response", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "pi-ship-auto-"));
     await createClonedRepository(workspace, "api", true);
@@ -299,7 +462,7 @@ describe("ShipWorkflow", () => {
     const ctx = fakeContext(workspace);
 
     await workflow.start("api --auto", ctx);
-    const reviewed = await completeApiSimplification(workflow, ctx, "Ship the API change.");
+    const reviewed = await completeApiPreparation(workflow, ctx, "Ship the API change.");
 
     expect(reviewed.content[0]?.text).toContain("call ship_report with action \"decision\"");
     expect(reviewed.content[0]?.text).toContain("Do not wait for user input");
@@ -335,7 +498,7 @@ describe("ShipWorkflow", () => {
     const ctx = fakeContext(workspace);
     await workflow.start("", ctx);
 
-    const reviewed = await completeApiSimplification(workflow, ctx, "Ship the coordinated API change.");
+    const reviewed = await completeApiPreparation(workflow, ctx, "Ship the coordinated API change.");
     expect(reviewed.content[0]?.text).toContain("No actionable findings");
     expect(reviewed.content[0]?.text).toContain("Call ship_report with action \"publish\"");
     expect(reviewed.content[0]?.text).toContain("Do not include an Independent review section");
@@ -343,6 +506,7 @@ describe("ShipWorkflow", () => {
     expect(reviewed.content[0]?.text).toContain("omit it for a single-repository ship");
     expect(reviewed.content[0]?.text).toContain("combine recurring routine gates");
     expect(reviewed.content[0]?.text).toContain("category names instead of exact commands");
+    expect(reviewed.content[0]?.text).toContain("do not mention the Simplify or Test workflow phases");
     expect(reviewed.content[0]?.text).not.toContain("## Review history");
     expect(state.entries.some((entry) => entry.customType === "pi-ship-review")).toBe(true);
     expect(workflow.status(ctx)).toContain("Independent review round 1 — pass");
@@ -415,7 +579,7 @@ describe("ShipWorkflow", () => {
     const workflow = new ShipWorkflow(fakePi(state), reviewer);
     const ctx = fakeContext(workspace);
     await workflow.start("--auto", ctx);
-    await completeApiSimplification(workflow, ctx, "Ship the API change.");
+    await completeApiPreparation(workflow, ctx, "Ship the API change.");
 
     const cappedRun = structuredClone(latestRun(state));
     cappedRun.stage = "awaiting-decision";
@@ -476,7 +640,7 @@ describe("ShipWorkflow", () => {
     );
     expect(deferredPublication.content[0]?.text).toContain("A default branch advanced after review");
 
-    const rereviewed = await completeApiSimplification(workflow, ctx, "Ship the API change.");
+    const rereviewed = await completeApiPreparation(workflow, ctx, "Ship the API change.");
     expect(rereviewed.content[0]?.text).toContain("No actionable findings");
     expect(rereviewed.content[0]?.text).toContain("Follow-up: Restore compatibility in follow-up.");
     expect(rereviewed.content[0]?.text).toContain("Tradeoff: The current API prevents this theoretical case.");
@@ -518,7 +682,7 @@ describe("ShipWorkflow", () => {
     const workflow = new ShipWorkflow(fakePi(state), passingReviewer);
     const ctx = fakeContext(workspace);
     await workflow.start("", ctx);
-    await completeApiSimplification(workflow, ctx, "Ship the API change.");
+    await completeApiPreparation(workflow, ctx, "Ship the API change.");
 
     await workflow.handleReport(
       {
@@ -537,12 +701,14 @@ describe("ShipWorkflow", () => {
     expect(pullRequestCommands.some(({ args }) => args[1] === "edit")).toBe(true);
   });
 
-  it("presents findings with context and keeps review-fix annotations out of PR guidance", async () => {
+  it("presents findings with context and scopes test durability to review fixes", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "pi-ship-review-fix-summary-"));
     const api = await createClonedRepository(workspace, "api", true);
     const state: FakePiState = { entries: [], messages: [], commands: [] };
     let reviewRound = 0;
-    const reviewer = async () => {
+    const reviewerManifests: ReviewerManifest[] = [];
+    const reviewer = async (_ctx: unknown, manifest: ReviewerManifest) => {
+      reviewerManifests.push(manifest);
       reviewRound += 1;
       if (reviewRound > 1) return passingReviewer();
       return {
@@ -569,12 +735,13 @@ describe("ShipWorkflow", () => {
     const workflow = new ShipWorkflow(fakePi(state), reviewer);
     const ctx = fakeContext(workspace);
     await workflow.start("", ctx);
-    const awaitingDecision = await completeApiSimplification(workflow, ctx, "Ship the API change.");
+    const awaitingDecision = await completeApiPreparation(workflow, ctx, "Ship the API change.");
     expect(awaitingDecision.content[0]?.text).toContain("Background you need first");
     expect(awaitingDecision.content[0]?.text).toContain("has not read the implementation");
     expect(awaitingDecision.content[0]?.text).toContain("the intended behavior");
     expect(awaitingDecision.content[0]?.text).toContain("recommended disposition—fix, accept, or defer");
     expect(awaitingDecision.content[0]?.text).toContain("rationale and tradeoffs");
+    expect(reviewerManifests[0]?.repositories[0]?.reviewFixPaths).toBeUndefined();
 
     const userEntry = {
       type: "message",
@@ -593,6 +760,7 @@ describe("ShipWorkflow", () => {
     );
 
     await writeFile(join(api, "file.txt"), "review fix\n", "utf8");
+    await writeFile(join(api, "file.test.ts"), "export {};\n", "utf8");
     const reviewed = await workflow.handleReport(
       {
         action: "fixes-complete",
@@ -617,6 +785,8 @@ describe("ShipWorkflow", () => {
     );
     expect(awaitingDecision.content[0]?.text).toContain("distinguish technical validity");
     expect(awaitingDecision.content[0]?.text).toContain("Prefer accept or defer for theoretical cases");
+    expect(reviewerManifests[1]?.repositories[0]?.reviewFixBase).toMatch(/^[0-9a-f]{40}$/);
+    expect(reviewerManifests[1]?.repositories[0]?.reviewFixPaths).toEqual(["file.test.ts", "file.txt"]);
   });
 
   it("validates every review-fix commit message before committing any repository", async () => {
@@ -680,6 +850,26 @@ describe("ShipWorkflow", () => {
             tests: [{ command: "no tests", status: "skipped", summary: "fixture repository" }],
           },
         ],
+      },
+      ctx,
+      undefined,
+    );
+    await workflow.handleReport(
+      {
+        action: "testing-complete",
+        repositories: ["api", "frontend"].map((repository) => ({
+          repository,
+          summary: `Updated ${repository}.`,
+          tests: [{ command: "no tests", status: "skipped" as const, summary: "fixture repository" }],
+          testCuration: {
+            added: 0,
+            rewritten: 0,
+            consolidated: 0,
+            removed: 0,
+            behaviors: [`${repository} contract`],
+            remainingGaps: [],
+          },
+        })),
       },
       ctx,
       undefined,

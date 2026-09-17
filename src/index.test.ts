@@ -52,7 +52,11 @@ describe("pi-ship session events", () => {
     const beforeAgentStart = handlers.get("before_agent_start")?.[0];
     expect(beforeAgentStart?.({ systemPrompt: "base" }, ctx)?.systemPrompt).toContain("simplifying");
 
-    branch = [entry(run("second", "drafting"))];
+    branch = [entry(run("second", "testing"))];
+    await handlers.get("session_tree")?.[0]?.({}, ctx);
+    expect(beforeAgentStart?.({ systemPrompt: "base" }, ctx)?.systemPrompt).toContain("curating durable tests");
+
+    branch = [entry(run("third", "drafting"))];
     await handlers.get("session_tree")?.[0]?.({}, ctx);
     expect(beforeAgentStart?.({ systemPrompt: "base" }, ctx)?.systemPrompt).toContain("ready to publish");
 

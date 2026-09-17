@@ -53,11 +53,23 @@ export function collectReviewerDecisions(
 
 export function buildReviewPrompt(manifest: ReviewerManifest): string {
   const repositories = manifest.repositories
-    .map(
-      (repository) =>
-        `- ${repository.name}: ${repository.changed ? "CHANGED — review complete diff" : "unchanged integration context"}\n  path: ${repository.path}\n  branch: ${repository.branch}\n  base: ${repository.baseRef}`,
-    )
+    .map((repository) => {
+      const curation = repository.testCuration;
+      const testContext = curation
+        ? `\n  internal test curation: ${curation.added} added, ${curation.rewritten} rewritten, ${curation.consolidated} consolidated, ${curation.removed} removed\n  protected behaviors: ${curation.behaviors.join("; ") || "none reported"}\n  remaining test gaps: ${curation.remainingGaps.join("; ") || "none reported"}`
+        : "";
+      return `- ${repository.name}: ${repository.changed ? "CHANGED — review complete diff" : "unchanged integration context"}\n  path: ${repository.path}\n  branch: ${repository.branch}\n  base: ${repository.baseRef}${testContext}`;
+    })
     .join("\n");
+  const reviewFixScopes = manifest.repositories.flatMap((repository) => {
+    if (!repository.reviewFixBase || !repository.reviewFixPaths?.length) return [];
+    return [
+      `- ${repository.name}, changes since ${repository.reviewFixBase}:\n${repository.reviewFixPaths.map((path) => `  - ${path}`).join("\n")}`,
+    ];
+  });
+  const reviewFixScopeSection = reviewFixScopes.length > 0
+    ? reviewFixScopes.join("\n")
+    : "- None. The dedicated Test phase already curated the original branch tests.";
   const priorDecisions = manifest.priorDecisions ?? [];
   const priorDecisionSection = priorDecisions.length > 0
     ? priorDecisions
@@ -78,11 +90,19 @@ ${manifest.intent}
 
 ${repositories}
 
+## Review-fix test scope
+
+${reviewFixScopeSection}
+
+Apply the durable-test policy only to tests and directly supporting snapshots, fixtures, or helpers listed in this scope. Use ship_git action \"review-fix-diff\" to isolate those edits. Do not re-audit other tests for general durability; outside this scope, inspect tests only for concrete correctness problems and whether changed product behavior has meaningful coverage.
+
 ## Prior review decisions and guidance
 
 ${priorDecisionSection}
 
 These decisions refine the original intent. For a fix decision, verify the implementation against its rationale; the rationale overrides conflicting language in the original finding or intent. For an accept or defer decision, do not report the same concern again unless the implementation materially changes its evidence, likelihood, or impact. Every recommendation must remain proportionate to the demonstrated risk.
+
+Test-curation summaries are internal evidence, not requirements or pull-request content. Do not redo their general durability analysis.
 
 Use ship_git to inspect every changed repository's summary, name-status, complete diff, and commit history. When ship_git returns a nextCursor, repeat the same request with that cursor until complete is true. Read surrounding implementation and selected unchanged repositories where needed. Check cross-repository contracts explicitly. Do not edit files. Finish by calling submit_review exactly once.`;
 }
