@@ -31,9 +31,10 @@ describe("reviewer policy", () => {
     expect(REVIEW_SYSTEM_PROMPT).toContain("solely for hypothetical edge cases");
     expect(REVIEW_SYSTEM_PROMPT).toContain("demonstrated maintenance or correctness risk");
     expect(REVIEW_SYSTEM_PROMPT).toContain("smallest proportionate recommendation");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("durable confidence");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("only to tests and directly supporting snapshots, fixtures, or helpers");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("dedicated Test phase already owns it");
     expect(REVIEW_SYSTEM_PROMPT).toContain("behavior-preserving implementation refactor");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("Do not demand tests for every method, branch, or theoretical edge case");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("Outside scope, inspect tests only for concrete correctness problems");
   });
 });
 

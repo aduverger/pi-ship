@@ -539,6 +539,10 @@ export class ShipWorkflow {
       return { repository, commitMessage };
     });
 
+    for (const repository of reviewRepositories(this.run)) {
+      delete repository.reviewFixBase;
+      delete repository.reviewFixPaths;
+    }
     for (const { repository, report, testCuration } of preparedReports) {
       repository.summary = report.summary;
       repository.tests = report.tests;
@@ -582,6 +586,8 @@ export class ShipWorkflow {
           branch: repository.branch,
           changed: repository.changed,
           ...(repository.testCuration ? { testCuration: repository.testCuration } : {}),
+          ...(repository.reviewFixBase ? { reviewFixBase: repository.reviewFixBase } : {}),
+          ...(repository.reviewFixPaths ? { reviewFixPaths: repository.reviewFixPaths } : {}),
         })),
         priorDecisions: collectReviewerDecisions(storedReviews(this.run)),
       },
@@ -696,13 +702,24 @@ export class ShipWorkflow {
       if (!report) continue;
       repository.tests = report.tests;
     }
-    const pendingCommits = dirtyRepositories.map((repository) => {
+    const pendingCommits = await Promise.all(dirtyRepositories.map(async (repository) => {
       const commitMessage = reports.get(repository.name)?.commitMessage?.trim();
       if (!commitMessage) throw new Error(`Review-fix report for ${repository.name} requires a commit message.`);
       if (commitMessage.includes("\n")) throw new Error(`Commit message for ${repository.name} must be one line.`);
-      return { repository, commitMessage };
-    });
-    for (const { repository, commitMessage } of pendingCommits) {
+      return {
+        repository,
+        commitMessage,
+        reviewFixBase: repository.head,
+        reviewFixPaths: await dirtyPaths(this.runCommand, repository.path),
+      };
+    }));
+    for (const repository of reviewRepositories(this.run)) {
+      delete repository.reviewFixBase;
+      delete repository.reviewFixPaths;
+    }
+    for (const { repository, commitMessage, reviewFixBase, reviewFixPaths } of pendingCommits) {
+      repository.reviewFixBase = reviewFixBase;
+      repository.reviewFixPaths = reviewFixPaths;
       await this.commitIfDirty(repository, commitMessage);
     }
     for (const repository of reviewRepositories(this.run)) await this.refreshRepository(repository);

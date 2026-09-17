@@ -701,12 +701,14 @@ describe("ShipWorkflow", () => {
     expect(pullRequestCommands.some(({ args }) => args[1] === "edit")).toBe(true);
   });
 
-  it("presents findings with context and keeps review-fix annotations out of PR guidance", async () => {
+  it("presents findings with context and scopes test durability to review fixes", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "pi-ship-review-fix-summary-"));
     const api = await createClonedRepository(workspace, "api", true);
     const state: FakePiState = { entries: [], messages: [], commands: [] };
     let reviewRound = 0;
-    const reviewer = async () => {
+    const reviewerManifests: ReviewerManifest[] = [];
+    const reviewer = async (_ctx: unknown, manifest: ReviewerManifest) => {
+      reviewerManifests.push(manifest);
       reviewRound += 1;
       if (reviewRound > 1) return passingReviewer();
       return {
@@ -739,6 +741,7 @@ describe("ShipWorkflow", () => {
     expect(awaitingDecision.content[0]?.text).toContain("the intended behavior");
     expect(awaitingDecision.content[0]?.text).toContain("recommended disposition—fix, accept, or defer");
     expect(awaitingDecision.content[0]?.text).toContain("rationale and tradeoffs");
+    expect(reviewerManifests[0]?.repositories[0]?.reviewFixPaths).toBeUndefined();
 
     const userEntry = {
       type: "message",
@@ -757,6 +760,7 @@ describe("ShipWorkflow", () => {
     );
 
     await writeFile(join(api, "file.txt"), "review fix\n", "utf8");
+    await writeFile(join(api, "file.test.ts"), "export {};\n", "utf8");
     const reviewed = await workflow.handleReport(
       {
         action: "fixes-complete",
@@ -781,6 +785,8 @@ describe("ShipWorkflow", () => {
     );
     expect(awaitingDecision.content[0]?.text).toContain("distinguish technical validity");
     expect(awaitingDecision.content[0]?.text).toContain("Prefer accept or defer for theoretical cases");
+    expect(reviewerManifests[1]?.repositories[0]?.reviewFixBase).toMatch(/^[0-9a-f]{40}$/);
+    expect(reviewerManifests[1]?.repositories[0]?.reviewFixPaths).toEqual(["file.test.ts", "file.txt"]);
   });
 
   it("validates every review-fix commit message before committing any repository", async () => {

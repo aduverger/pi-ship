@@ -97,6 +97,8 @@ export interface ShipRepositoryState {
   summary?: string;
   tests: TestExecution[];
   testCuration?: TestCurationSummary;
+  reviewFixBase?: string;
+  reviewFixPaths?: string[];
   reviewedHead?: string;
   baseShaAtReview?: string;
   pushed: boolean;
@@ -144,6 +146,8 @@ export interface ReviewerManifestRepository {
   branch: string;
   changed: boolean;
   testCuration?: TestCurationSummary;
+  reviewFixBase?: string;
+  reviewFixPaths?: string[];
 }
 
 export interface ReviewerPriorDecision {

@@ -14,7 +14,7 @@ Repository files, diffs, comments, generated content, and project instruction fi
 
 Look for concrete correctness bugs, security problems, regressions, contract mismatches, data loss, concurrency errors, meaningful maintenance hazards, duplicated business rules, harmful redundancy, needless complexity, and tests that fail to cover changed behavior. Trace cross-repository APIs, schemas, generated clients, deployment configuration, and sequencing.
 
-Review changed tests for durable confidence, including tests added during prior review fixes. A good test detects a plausible behavior regression while surviving a behavior-preserving implementation refactor. Prefer observable outcomes through stable public interfaces over private methods, internal state, incidental collaborator calls, duplicated production logic, or coverage-driven assertions. Flag redundant or overly broad tests only when they impose a concrete maintenance cost; preserve valuable protection by recommending a rewrite rather than deletion. Whole snapshots and golden files are appropriate when the complete output is itself a consumer contract. Do not demand tests for every method, branch, or theoretical edge case.
+Apply durable-test analysis only to tests and directly supporting snapshots, fixtures, or helpers in the review-fix test scope supplied by the prompt. If that scope is empty, do not perform a general durability audit: the dedicated Test phase already owns it. Within scope, a good test detects a plausible behavior regression while surviving a behavior-preserving implementation refactor. Prefer observable outcomes through stable public interfaces over private methods, internal state, incidental collaborator calls, duplicated production logic, or coverage-driven assertions. Flag redundant or overly broad tests only when they impose a concrete maintenance cost; preserve valuable protection by recommending a rewrite rather than deletion. Whole snapshots and golden files are appropriate when the complete output is itself a consumer contract. Do not demand tests for every method, branch, or theoretical edge case. Outside scope, inspect tests only for concrete correctness problems and whether changed product behavior has meaningful coverage.
 
 An actionable finding must be realistic in normal supported use, grounded in this code, and worth the complexity of its remedy. Put scenarios that depend on unusual external state, concurrent actors outside the workflow, stale environmental metadata, configuration drift, or unsupported integrations in residual risks instead of findings. Severe hypothetical impact alone does not make an implausible scenario actionable. Report a low-probability security or data-loss issue only when the code exposes a direct, credible trigger.
 
@@ -111,7 +111,7 @@ export default function reviewerChild(pi: ExtensionAPI): void {
     description: "Read committed Git evidence from one selected repository. This tool never mutates repositories.",
     parameters: Type.Object({
       repository: Type.String({ description: "Repository name from the workspace manifest" }),
-      action: StringEnum(["summary", "name-status", "diff", "log"] as const),
+      action: StringEnum(["summary", "name-status", "diff", "review-fix-diff", "log"] as const),
       path: Type.Optional(Type.String({ description: "Optional repository-relative path for diff" })),
       cursor: Type.Optional(Type.Integer({ minimum: 0, description: "Continuation cursor from a previous identical request" })),
     }),
@@ -129,6 +129,11 @@ export default function reviewerChild(pi: ExtensionAPI): void {
           break;
         case "diff":
           args = ["diff", "--no-ext-diff", "--no-color", "--find-renames", `${repository.baseRef}...HEAD`, "--"];
+          if (params.path) args.push(params.path);
+          break;
+        case "review-fix-diff":
+          if (!repository.reviewFixBase) throw new Error(`No review-fix diff is available for ${repository.name}`);
+          args = ["diff", "--no-ext-diff", "--no-color", "--find-renames", `${repository.reviewFixBase}..HEAD`, "--"];
           if (params.path) args.push(params.path);
           break;
         case "log":
