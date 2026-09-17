@@ -48,7 +48,7 @@ From a workspace directory that is not itself a Git repository, `/ship` discover
 
 ```text
 /ship
-/ship emidat-api emidat-frontend
+/ship api frontend
 ```
 
 Operational commands:
