@@ -42,6 +42,7 @@ Inside a Git repository, `/ship` targets only that repository:
 
 ```text
 /ship
+/ship --auto
 ```
 
 From a workspace directory that is not itself a Git repository, `/ship` discovers direct child Git roots:
@@ -49,7 +50,10 @@ From a workspace directory that is not itself a Git repository, `/ship` discover
 ```text
 /ship
 /ship api frontend
+/ship api frontend --auto
 ```
+
+`--auto` makes the agent's evidence-based review dispositions authoritative without waiting for user approval. It stops applying fixes after the fifth independent review, then publishes with any remaining findings disclosed as PR follow-ups. If the base branch moves afterward, mandatory rebase validation may add review-only rounds; their findings are disclosed but not fixed. A ready PR with remaining blocking findings is returned to draft status.
 
 Operational commands:
 
@@ -68,7 +72,7 @@ Operational commands:
 3. Keep a default-branch repository only when its `HEAD` exactly matches the fetched remote, classifying it as workspace context/config; rebase changed feature branches.
 4. Simplify the listed changed-feature files, using Git line ranges as guidance rather than hard edit boundaries, then test and commit per repository.
 5. Launch one fresh, read-only Pi reviewer over the complete selected workspace. It inherits the active model, always uses high thinking, can page through complete Git diffs, and focuses on concrete, proportionate correctness and maintainability findings.
-6. Persist a visible repository-qualified findings summary in the active session branch and return the full review to the main agent for analysis and a user decision. Later review rounds receive every prior user decision and rationale so fixes are verified against updated guidance and accepted or deferred tradeoffs are not reported repeatedly.
+6. Persist a visible repository-qualified findings summary in the active session branch and return the full review to the main agent for evidence-based reachability and proportionality analysis. Normal runs wait for a user decision; `--auto` runs immediately apply the agent's structured disposition. Later review rounds receive every prior decision and rationale so fixes are verified against updated guidance and accepted or deferred tradeoffs are not reported repeatedly.
 7. Apply approved fixes, test, commit each repository with a message describing its actual changes, and independently review the complete workspace again.
 8. Verify that every pushed SHA exactly matches the reviewed SHA and that default branches have not advanced.
 9. Push all changed branches, create or update one draft PR per changed repository, and cross-link related PRs.
@@ -86,7 +90,7 @@ The changed-line simplification prompt is adapted from [MattDevy/pi-simplify](ht
 - Rebased existing branches use `--force-with-lease` against the observed remote SHA.
 - A moved default branch restarts rebase, simplification, and review before publication.
 - Partial push/PR failures are resumable with `/ship resume`.
-- New PRs are created as drafts; existing PRs preserve their current ready or draft state.
+- New PRs are created as drafts; existing PRs preserve their current readiness unless an auto run reaches its review cap with blocking findings, in which case affected PRs return to draft.
 - `/ship abort` aborts active rebases but preserves already completed rebases and commits.
 
 ## Development

@@ -105,6 +105,7 @@ export interface ShipRun {
   stage: ShipStage;
   createdAt: number;
   updatedAt: number;
+  auto?: boolean;
   intent?: string;
   repositories: ShipRepositoryState[];
   rebaseIndex: number;

@@ -34,6 +34,7 @@ import type {
   FindingDecision,
   PullRequestDraft,
   RepositoryReport,
+  ReviewFinding,
   ShipRepositoryState,
   ShipReportInput,
   ShipRun,
@@ -42,11 +43,12 @@ import type {
 } from "./types.js";
 
 const STATE_ENTRY = "pi-ship-state";
-const REVIEW_DECISION_GUIDANCE = `Analyze every finding against the code and intent. Assume the user planned the work but has not read the implementation, and do not merely repeat the structured review fields.
+const AUTO_REVIEW_LIMIT = 5;
+const REVIEW_DECISION_ANALYSIS = `Analyze every finding against the code and intent. Assume the user planned the work but has not read the implementation, and do not merely repeat the structured review fields.
 
 Start with "Background you need first": a concise explanation of the feature, relevant architecture and data flow, and domain concepts needed to assess the findings. Then present each finding separately. For each one, explain the intended behavior, the concrete problem and evidence in plain language, the realistic impact and why it matters, the proposed fix, and your recommended disposition—fix, accept, or defer—with rationale and tradeoffs. Define project-specific terms, connect affected components end to end, and include a focused code excerpt when it materially clarifies the issue. Keep the presentation concise but self-contained for someone who has not read the code.
 
-Then stop. Do not call ship_report with action decision until the user explicitly responds.`;
+Before recommending a disposition, distinguish technical validity from whether a fix is proportionate now. For scenario-dependent findings, inspect relevant authoritative fixtures, source data, production-like examples, current tests, and UI or API prevention paths when available. Classify the scenario as current, realistically reachable, or theoretical; estimate its likely frequency and fix surface; and identify undefined product semantics. The rationale must summarize this evidence when relevant. Prefer accept or defer for theoretical cases unless they threaten a core invariant or have a trivial, unambiguous fix. Apply this investigation only where relevant; direct bugs do not require artificial fixture or reachability checks.`;
 
 const ACTIVE_STAGES = new Set<ShipRun["stage"]>([
   "preflight",
@@ -90,6 +92,32 @@ function storedReviews(run: ShipRun): StoredReview[] {
   return [...(run.reviewHistory ?? []), ...(run.review ? [run.review] : [])];
 }
 
+function latestReviewRound(run: ShipRun): number {
+  return run.review?.round ?? run.reviewHistory?.at(-1)?.round ?? 0;
+}
+
+function reachedAutoReviewLimit(run: ShipRun): boolean {
+  return run.auto === true && latestReviewRound(run) >= AUTO_REVIEW_LIMIT;
+}
+
+interface CappedFindingOutcome {
+  finding: ReviewFinding;
+  decision: FindingDecision;
+}
+
+function cappedFindingOutcomes(run: ShipRun): CappedFindingOutcome[] {
+  if (!run.auto) return [];
+  return storedReviews(run)
+    .filter((review) => review.round >= AUTO_REVIEW_LIMIT)
+    .flatMap((review) => {
+      const findingsById = new Map(review.result.findings.map((finding) => [finding.id, finding]));
+      return (review.decisions ?? []).flatMap((decision) => {
+        const finding = findingsById.get(decision.findingId);
+        return finding && decision.action !== "fix" ? [{ finding, decision }] : [];
+      });
+    });
+}
+
 function isStoredRun(value: unknown): value is ShipRun {
   if (!value || typeof value !== "object") return false;
   const run = value as Partial<ShipRun>;
@@ -114,6 +142,7 @@ export class ShipWorkflow {
       const entry = branch[index];
       if (entry?.type === "custom" && entry.customType === STATE_ENTRY && isStoredRun(entry.data)) {
         this.run = structuredClone(entry.data);
+        this.run.auto ??= false;
         for (const repository of this.run.repositories) repository.contextOnly ??= false;
         break;
       }
@@ -125,6 +154,11 @@ export class ShipWorkflow {
     if (!this.run || !ACTIVE_STAGES.has(this.run.stage)) return undefined;
     switch (this.run.stage) {
       case "awaiting-decision":
+        if (this.run.auto) {
+          return reachedAutoReviewLimit(this.run)
+            ? "pi-ship is autonomously resolving its final review round. Analyze every finding, use accept or defer for each one, then call ship_report with action decision without waiting for user input. Do not edit files."
+            : "pi-ship is autonomously resolving review findings. Analyze every finding, then call ship_report with action decision using your recommended dispositions without waiting for user input. Do not edit files before that tool accepts the decision.";
+        }
         return "pi-ship is awaiting the user's review decision. Analyze their latest message against every finding, then call ship_report with action decision. Do not edit files before that tool accepts the decision.";
       case "fixing":
         return "pi-ship is applying approved review fixes. Make only the approved changes, run relevant tests in every changed repository, do not commit, then call ship_report with action fixes-complete.";
@@ -145,7 +179,11 @@ export class ShipWorkflow {
       throw new Error(`A /ship run is already ${this.run.stage}. Use /ship status, /ship resume, or /ship abort.`);
     }
 
-    const requested = args.trim() ? args.trim().split(/\s+/) : [];
+    const tokens = args.trim() ? args.trim().split(/\s+/) : [];
+    const auto = tokens.includes("--auto");
+    const unknownOptions = tokens.filter((token) => token.startsWith("-") && token !== "--auto");
+    if (unknownOptions.length > 0) throw new Error(`Unknown /ship option: ${unknownOptions.join(", ")}`);
+    const requested = tokens.filter((token) => token !== "--auto");
     const discovered = await discoverRepositoryPaths(this.runCommand, ctx.cwd, requested);
 
     const dirty: string[] = [];
@@ -177,6 +215,7 @@ export class ShipWorkflow {
       stage: "rebasing",
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      auto,
       repositories,
       rebaseIndex: 0,
     };
@@ -188,7 +227,8 @@ export class ShipWorkflow {
 
   status(ctx: ExtensionContext): string {
     if (!this.run) return "No /ship run is recorded in this session.";
-    const lines = [`Ship ${this.run.id.slice(0, 8)}: ${this.run.stage}`];
+    const mode = this.run.auto ? ` (auto, review round ${latestReviewRound(this.run)}/${AUTO_REVIEW_LIMIT})` : "";
+    const lines = [`Ship ${this.run.id.slice(0, 8)}: ${this.run.stage}${mode}`];
     for (const repository of this.run.repositories) {
       let role = "review context";
       if (repository.contextOnly) role = "workspace context";
@@ -227,7 +267,7 @@ export class ShipWorkflow {
         prompt = (await this.performReview(ctx)).content[0]?.text;
         break;
       case "awaiting-decision":
-        prompt = `${this.formatReview()}\n\n${REVIEW_DECISION_GUIDANCE}`;
+        prompt = `${this.formatReview()}\n\n${this.buildReviewDecisionGuidance()}`;
         break;
       case "fixing":
         prompt = this.buildFixPrompt();
@@ -524,7 +564,7 @@ export class ShipWorkflow {
     this.appendReviewEntry();
 
     if (review.findings.length > 0) {
-      return this.result(`${this.formatReview()}\n\n${REVIEW_DECISION_GUIDANCE}`);
+      return this.result(`${this.formatReview()}\n\n${this.buildReviewDecisionGuidance()}`);
     }
     return this.result(`${this.formatReview()}\n\n${this.buildDraftPrompt()}`);
   }
@@ -533,7 +573,7 @@ export class ShipWorkflow {
     if (!this.run || this.run.stage !== "awaiting-decision" || !this.run.review) {
       throw new Error("pi-ship is not awaiting a review decision.");
     }
-    if (!this.hasUserMessageAfterReview(ctx)) {
+    if (!this.run.auto && !this.hasUserMessageAfterReview(ctx)) {
       throw new Error("The user has not responded to the review yet. Present the plan and wait for their decision.");
     }
 
@@ -546,6 +586,12 @@ export class ShipWorkflow {
     }
     for (const findingId of byId.keys()) {
       if (!findingIds.has(findingId)) throw new Error(`Unknown finding decision ${findingId}.`);
+    }
+
+    if (reachedAutoReviewLimit(this.run) && decisions.some((decision) => decision.action === "fix")) {
+      throw new Error(
+        `Autonomous review reached round ${AUTO_REVIEW_LIMIT}; record fix-worthy findings as defer with the recommended fix preserved in the rationale.`,
+      );
     }
 
     this.run.review.decisions = decisions;
@@ -659,6 +705,12 @@ export class ShipWorkflow {
       this.persist(ctx);
     }
 
+    for (const repository of changed) {
+      if (repository.pullRequestUrl && this.hasCappedBlockingFindings(repository.name)) {
+        await this.ensurePullRequestDraft(repository);
+      }
+    }
+
     const links = new Map(changed.flatMap((repository) => repository.pullRequestUrl ? [[repository.name, repository.pullRequestUrl] as const] : []));
     for (const repository of changed) {
       const draft = byRepository.get(repository.name);
@@ -727,6 +779,26 @@ export class ShipWorkflow {
     });
   }
 
+  private async ensurePullRequestDraft(repository: ShipRepositoryState): Promise<void> {
+    if (!repository.pullRequestUrl) throw new Error(`No PR URL for ${repository.name}.`);
+    const viewed = await this.pi.exec(
+      "gh",
+      ["pr", "view", repository.pullRequestUrl, "--repo", repository.githubRepository, "--json", "isDraft", "--jq", ".isDraft"],
+      { cwd: repository.path, timeout: 30_000 },
+    );
+    if (viewed.code !== 0) throw new Error(`Could not inspect PR readiness for ${repository.name}: ${viewed.stderr.trim()}`);
+    const isDraft = viewed.stdout.trim();
+    if (isDraft === "true") return;
+    if (isDraft !== "false") throw new Error(`Could not determine PR readiness for ${repository.name}.`);
+
+    const demoted = await this.pi.exec(
+      "gh",
+      ["pr", "ready", repository.pullRequestUrl, "--repo", repository.githubRepository, "--undo"],
+      { cwd: repository.path, timeout: 30_000 },
+    );
+    if (demoted.code !== 0) throw new Error(`Could not convert PR to draft for ${repository.name}: ${demoted.stderr.trim()}`);
+  }
+
   private async editPullRequest(
     repository: ShipRepositoryState,
     title: string,
@@ -756,6 +828,17 @@ export class ShipWorkflow {
     }
   }
 
+  private buildReviewDecisionGuidance(): string {
+    if (!this.run?.review) throw new Error("No review is available for a decision.");
+    if (!this.run.auto) {
+      return `${REVIEW_DECISION_ANALYSIS}\n\nThen stop. Do not call ship_report with action decision until the user explicitly responds.`;
+    }
+    if (reachedAutoReviewLimit(this.run)) {
+      return `${REVIEW_DECISION_ANALYSIS}\n\nThis is the final autonomous review round (${AUTO_REVIEW_LIMIT}/${AUTO_REVIEW_LIMIT}). Do not make or recommend another in-run fix. Use accept for findings that are proportionate tradeoffs and defer for fix-worthy findings, preserving the recommended follow-up in each defer rationale. Then, in this same turn, call ship_report with action "decision" for every finding. Do not wait for user input.`;
+    }
+    return `${REVIEW_DECISION_ANALYSIS}\n\nState your recommended disposition for every finding, then, in this same turn, call ship_report with action "decision" using exactly those dispositions and concise evidence-based rationales. Do not wait for user input.`;
+  }
+
   private buildFixPrompt(): string {
     if (!this.run?.review?.decisions) throw new Error("No approved decisions are available.");
     const findings = new Map(this.run.review.result.findings.map((finding) => [finding.id, finding]));
@@ -763,10 +846,10 @@ export class ShipWorkflow {
       .filter((decision) => decision.action === "fix")
       .map((decision) => {
         const finding = findings.get(decision.findingId);
-        return `- ${decision.findingId} (${finding?.repository ?? "unknown"}): ${finding?.recommendation ?? ""}\n  User guidance: ${decision.rationale}`;
+        return `- ${decision.findingId} (${finding?.repository ?? "unknown"}): ${finding?.recommendation ?? ""}\n  Decision rationale: ${decision.rationale}`;
       })
       .join("\n");
-    return `Apply only these user-approved review fixes across the selected workspace:\n\n${fixes}\n\nRead surrounding and cross-repository code as needed. Do not commit. Run relevant tests in every changed repository, then call ship_report with action "fixes-complete" and repository reports containing exact test commands and outcomes. For every repository you edit, include a concise, one-line commitMessage describing the actual change (for example, "fix: preserve existing PR readiness"); do not use generic review-workflow wording.`;
+    return `Apply only these approved review fixes across the selected workspace:\n\n${fixes}\n\nRead surrounding and cross-repository code as needed. Do not commit. Run relevant tests in every changed repository, then call ship_report with action "fixes-complete" and repository reports containing exact test commands and outcomes. For every repository you edit, include a concise, one-line commitMessage describing the actual change (for example, "fix: preserve existing PR readiness"); do not use generic review-workflow wording.`;
   }
 
   private buildDraftPrompt(): string {
@@ -777,11 +860,33 @@ export class ShipWorkflow {
           `### ${repository.name}\n\nSummary:\n${repository.summary ?? "Inspect the final diff."}\n\nTests:\n${testsMarkdown(repository.tests) || "- Not reported"}`,
       )
       .join("\n\n");
-    return `Prepare one concise GitHub pull request title and body for every changed repository below. Each body must help a human reviewer who was not in this session and include: Intent, Changes, Decisions and tradeoffs, Testing, and Risks or follow-ups. Include a Cross-repository context section only when another selected repository materially affects the change, review, rollout, or testing; omit it for a single-repository ship or when there is no cross-repository context to flag. Do not include an Independent review section, review history, finding dispositions, secrets, or the raw conversation. Do not ask for publication confirmation; /ship already authorized it. Call ship_report with action "publish" and all drafts.\n\n## Workspace intent\n\n${this.run.intent}\n\n${repositories}`;
+    return `Prepare one concise GitHub pull request title and body for every changed repository below. Each body must help a human reviewer who was not in this session and include: Intent, Changes, Decisions and tradeoffs, Testing, and Risks or follow-ups. In Testing, combine recurring routine gates—formatting, linting, static analysis, type checking, ordinary automated tests, and routine builds—into one short result line using category names instead of exact commands. Keep unusual environment setup, artifact inspection, migration validation, and manual behavioral verification as separate entries. Include a Cross-repository context section only when another selected repository materially affects the change, review, rollout, or testing; omit it for a single-repository ship or when there is no cross-repository context to flag. Do not include an Independent review section, review history, finding dispositions, secrets, or the raw conversation. Do not ask for publication confirmation; /ship already authorized it. Call ship_report with action "publish" and all drafts.\n\n## Workspace intent\n\n${this.run.intent}\n\n${repositories}${this.buildCappedFindingGuidance()}`;
+  }
+
+  private buildCappedFindingGuidance(): string {
+    if (!this.run) return "";
+    const outcomes = cappedFindingOutcomes(this.run);
+    if (outcomes.length === 0) return "";
+    const findings = outcomes
+      .map(({ finding, decision }) => {
+        const context = decision.action === "accept" ? "Tradeoff" : "Follow-up";
+        return `- [${finding.severity}] ${finding.repository}: ${finding.title}\n  Impact: ${finding.impact}\n  ${context}: ${decision.rationale}`;
+      })
+      .join("\n");
+    return `\n\nThe autonomous review limit was reached. Include every item below concisely in Risks or follow-ups for its named repository, preserving its severity, impact, and supplied tradeoff or follow-up context. Include it in another repository's PR only when it materially affects that PR. Do not label this as independent review or mention workflow internals.\n\n${findings}`;
   }
 
   private formatReview(): string {
     return this.run?.review ? formatFullReview(this.run.review) : "No review result.";
+  }
+
+  private hasCappedBlockingFindings(repositoryName: string): boolean {
+    if (!this.run) return false;
+    return cappedFindingOutcomes(this.run).some(
+      ({ finding }) =>
+        finding.severity === "blocking" &&
+        (finding.repository === repositoryName || finding.relatedRepositories.includes(repositoryName)),
+    );
   }
 
   private validateReports(
@@ -914,7 +1019,8 @@ export class ShipWorkflow {
     }
     const changed = changedRepositories(this.run).length;
     const latestReview = this.run.review ?? this.run.reviewHistory?.at(-1);
-    ctx.ui.setStatus("pi-ship", `ship: ${this.run.stage} (${changed}/${this.run.repositories.length} repos)`);
+    const mode = this.run.auto ? `, auto review ${latestReviewRound(this.run)}/${AUTO_REVIEW_LIMIT}` : "";
+    ctx.ui.setStatus("pi-ship", `ship: ${this.run.stage} (${changed}/${this.run.repositories.length} repos${mode})`);
     ctx.ui.setWidget(
       "pi-ship",
       [

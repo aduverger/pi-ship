@@ -56,7 +56,15 @@ interface FakePiState {
   entries: Array<{ customType: string; data: unknown }>;
   messages: Array<{ content: string }>;
   commands: Array<{ command: string; args: string[] }>;
-  existingPullRequest?: { number: number; url: string };
+  existingPullRequest?: { number: number; url: string; isDraft?: boolean };
+}
+
+function latestRun(state: FakePiState): ShipRun {
+  for (let index = state.entries.length - 1; index >= 0; index--) {
+    const entry = state.entries[index];
+    if (entry?.customType === "pi-ship-state") return entry.data as ShipRun;
+  }
+  throw new Error("No stored ship run.");
 }
 
 function fakePi(state: FakePiState): ExtensionAPI {
@@ -68,11 +76,19 @@ function fakePi(state: FakePiState): ExtensionAPI {
         const pullRequests = state.existingPullRequest ? [state.existingPullRequest] : [];
         return { stdout: JSON.stringify(pullRequests), stderr: "", code: 0, killed: false };
       }
+      if (args[0] === "pr" && args[1] === "view") {
+        return {
+          stdout: `${state.existingPullRequest?.isDraft ?? true}\n`,
+          stderr: "",
+          code: 0,
+          killed: false,
+        };
+      }
       if (args[0] === "pr" && args[1] === "create") {
         const repository = args[args.indexOf("--repo") + 1];
         return { stdout: `https://github.com/${repository}/pull/1\n`, stderr: "", code: 0, killed: false };
       }
-      if (args[0] === "pr" && args[1] === "edit") {
+      if (args[0] === "pr" && (args[1] === "edit" || args[1] === "ready")) {
         return { stdout: "", stderr: "", code: 0, killed: false };
       }
       throw new Error(`Unexpected gh command: ${args.join(" ")}`);
@@ -137,6 +153,27 @@ const passingReviewer = async () => ({
   suggestedTests: [],
 });
 
+const blockingReviewer = async () => ({
+  verdict: "findings" as const,
+  summary: "One blocking finding.",
+  findings: [
+    {
+      id: "R1",
+      repository: "api",
+      severity: "blocking" as const,
+      file: "file.txt",
+      title: "Preserve the API contract",
+      evidence: "The changed fixture breaks the contract.",
+      impact: "Existing clients can fail.",
+      recommendation: "Restore compatibility before merging.",
+      confidence: "high" as const,
+      relatedRepositories: [],
+    },
+  ],
+  residualRisks: [],
+  suggestedTests: [],
+});
+
 async function completeApiSimplification(
   workflow: ShipWorkflow,
   ctx: ExtensionCommandContext,
@@ -169,7 +206,7 @@ describe("ShipWorkflow", () => {
 
     await workflow.start("", ctx);
 
-    const stored = state.entries.at(-1)?.data as ShipRun;
+    const stored = latestRun(state);
     expect(stored.stage).toBe("complete");
     expect(stored.repositories[0]).toMatchObject({
       name: "config",
@@ -246,12 +283,42 @@ describe("ShipWorkflow", () => {
     expect(state.messages[0]?.content).toContain("### api");
     expect(state.messages[0]?.content).not.toContain("### frontend");
     expect(await execFileAsync("git", ["status", "--porcelain"], { cwd: api }).then((result) => result.stdout)).toBe("");
-    const stored = state.entries.at(-1)?.data as ShipRun;
+    const stored = latestRun(state);
     expect(stored.stage).toBe("simplifying");
     expect(stored.repositories.map(({ name, changed }) => ({ name, changed }))).toEqual([
       { name: "api", changed: true },
       { name: "frontend", changed: false },
     ]);
+  });
+
+  it("persists auto mode and applies agent decisions without a user response", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-auto-"));
+    await createClonedRepository(workspace, "api", true);
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    const workflow = new ShipWorkflow(fakePi(state), blockingReviewer);
+    const ctx = fakeContext(workspace);
+
+    await workflow.start("api --auto", ctx);
+    const reviewed = await completeApiSimplification(workflow, ctx, "Ship the API change.");
+
+    expect(reviewed.content[0]?.text).toContain("call ship_report with action \"decision\"");
+    expect(reviewed.content[0]?.text).toContain("Do not wait for user input");
+    expect(reviewed.content[0]?.text).toContain("authoritative fixtures");
+    expect(reviewed.content[0]?.text).toContain("realistically reachable, or theoretical");
+    expect(workflow.status(ctx)).toContain("auto, review round 1/5");
+    expect(latestRun(state).auto).toBe(true);
+
+    const decision = await workflow.handleReport(
+      {
+        action: "decision",
+        decisions: [{ findingId: "R1", action: "fix", rationale: "Directly reachable contract break." }],
+      },
+      ctx,
+      undefined,
+    );
+
+    expect(decision.content[0]?.text).toContain("Apply only these approved review fixes");
+    expect(latestRun(state).stage).toBe("fixing");
   });
 
   it("reviews, force-with-lease pushes, and publishes without a final confirmation", async () => {
@@ -274,6 +341,8 @@ describe("ShipWorkflow", () => {
     expect(reviewed.content[0]?.text).toContain("Do not include an Independent review section");
     expect(reviewed.content[0]?.text).toContain("Include a Cross-repository context section only when");
     expect(reviewed.content[0]?.text).toContain("omit it for a single-repository ship");
+    expect(reviewed.content[0]?.text).toContain("combine recurring routine gates");
+    expect(reviewed.content[0]?.text).toContain("category names instead of exact commands");
     expect(reviewed.content[0]?.text).not.toContain("## Review history");
     expect(state.entries.some((entry) => entry.customType === "pi-ship-review")).toBe(true);
     expect(workflow.status(ctx)).toContain("Independent review round 1 — pass");
@@ -301,9 +370,137 @@ describe("ShipWorkflow", () => {
       ({ command, args }) => command === "gh" && args[0] === "pr" && args[1] === "create",
     );
     expect(createPullRequest?.args).toContain("--draft");
-    const finalRun = state.entries.at(-1)?.data as ShipRun;
+    const finalRun = latestRun(state);
     expect(finalRun.stage).toBe("complete");
     expect(finalRun.repositories.find(({ name }) => name === "frontend")?.pullRequestUrl).toBeUndefined();
+  });
+
+  it("preserves fifth-round outcomes through a base advance and returns an affected ready PR to draft", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-auto-cap-"));
+    const api = await createClonedRepository(workspace, "api", true);
+    const state: FakePiState = {
+      entries: [],
+      messages: [],
+      commands: [],
+      existingPullRequest: {
+        number: 7,
+        url: "https://github.com/example/api/pull/7",
+        isDraft: false,
+      },
+    };
+    let reviewRound = 0;
+    const reviewer = async () => {
+      reviewRound += 1;
+      if (reviewRound > 1) return passingReviewer();
+      const review = await blockingReviewer();
+      return {
+        ...review,
+        findings: [
+          ...review.findings,
+          {
+            id: "R2",
+            repository: "api",
+            severity: "warning" as const,
+            file: "file.txt",
+            title: "Handle a theoretical edge case",
+            evidence: "The scenario is not reachable through the current API.",
+            impact: "A hypothetical caller could receive stale data.",
+            recommendation: "Add a speculative fallback.",
+            confidence: "medium" as const,
+            relatedRepositories: [],
+          },
+        ],
+      };
+    };
+    const workflow = new ShipWorkflow(fakePi(state), reviewer);
+    const ctx = fakeContext(workspace);
+    await workflow.start("--auto", ctx);
+    await completeApiSimplification(workflow, ctx, "Ship the API change.");
+
+    const cappedRun = structuredClone(latestRun(state));
+    cappedRun.stage = "awaiting-decision";
+    cappedRun.review!.round = 5;
+    cappedRun.repositories[0]!.pullRequestUrl = "https://github.com/example/api/pull/7";
+    const cappedEntry = { type: "custom", customType: "pi-ship-state", data: cappedRun } as SessionEntry;
+    workflow.restore(fakeContext(workspace, [cappedEntry]));
+
+    await expect(
+      workflow.handleReport(
+        {
+          action: "decision",
+          decisions: [
+            { findingId: "R1", action: "fix", rationale: "Fix the contract." },
+            { findingId: "R2", action: "accept", rationale: "The current API prevents this theoretical case." },
+          ],
+        },
+        ctx,
+        undefined,
+      ),
+    ).rejects.toThrow("record fix-worthy findings as defer");
+
+    const drafting = await workflow.handleReport(
+      {
+        action: "decision",
+        decisions: [
+          { findingId: "R1", action: "defer", rationale: "Restore compatibility in follow-up." },
+          { findingId: "R2", action: "accept", rationale: "The current API prevents this theoretical case." },
+        ],
+      },
+      ctx,
+      undefined,
+    );
+    expect(drafting.content[0]?.text).toContain("autonomous review limit was reached");
+    expect(drafting.content[0]?.text).toContain("[blocking] api: Preserve the API contract");
+    expect(drafting.content[0]?.text).toContain("Follow-up: Restore compatibility in follow-up.");
+    expect(drafting.content[0]?.text).toContain("Tradeoff: The current API prevents this theoretical case.");
+    expect(drafting.content[0]?.text).not.toContain("Add a speculative fallback");
+
+    const baseSha = await execFileAsync("git", ["rev-parse", "refs/remotes/origin/main"], { cwd: api })
+      .then(({ stdout }) => stdout.trim());
+    const baseTree = await execFileAsync("git", ["rev-parse", `${baseSha}^{tree}`], { cwd: api })
+      .then(({ stdout }) => stdout.trim());
+    const advancedBaseSha = await execFileAsync(
+      "git",
+      ["commit-tree", baseTree, "-p", baseSha, "-m", "advance base"],
+      { cwd: api },
+    ).then(({ stdout }) => stdout.trim());
+    await git(api, ["update-ref", "refs/remotes/origin/main", advancedBaseSha]);
+
+    const deferredPublication = await workflow.handleReport(
+      {
+        action: "publish",
+        drafts: [{ repository: "api", title: "Update API", body: "## Risks or follow-ups\n\nRestore compatibility." }],
+      },
+      ctx,
+      undefined,
+    );
+    expect(deferredPublication.content[0]?.text).toContain("A default branch advanced after review");
+
+    const rereviewed = await completeApiSimplification(workflow, ctx, "Ship the API change.");
+    expect(rereviewed.content[0]?.text).toContain("No actionable findings");
+    expect(rereviewed.content[0]?.text).toContain("Follow-up: Restore compatibility in follow-up.");
+    expect(rereviewed.content[0]?.text).toContain("Tradeoff: The current API prevents this theoretical case.");
+
+    await workflow.handleReport(
+      {
+        action: "publish",
+        drafts: [{ repository: "api", title: "Update API", body: "## Risks or follow-ups\n\nRestore compatibility." }],
+      },
+      ctx,
+      undefined,
+    );
+
+    const readyCommand = state.commands.find(
+      ({ command, args }) => command === "gh" && args[0] === "pr" && args[1] === "ready",
+    );
+    expect(readyCommand?.args).toEqual([
+      "pr",
+      "ready",
+      "https://github.com/example/api/pull/7",
+      "--repo",
+      "example/api",
+      "--undo",
+    ]);
   });
 
   it("updates an existing PR without changing its readiness", async () => {
@@ -418,6 +615,8 @@ describe("ShipWorkflow", () => {
     expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: api }).then(({ stdout }) => stdout.trim())).toBe(
       "fix: update API fixture",
     );
+    expect(awaitingDecision.content[0]?.text).toContain("distinguish technical validity");
+    expect(awaitingDecision.content[0]?.text).toContain("Prefer accept or defer for theoretical cases");
   });
 
   it("validates every review-fix commit message before committing any repository", async () => {
@@ -628,7 +827,7 @@ describe("ShipWorkflow", () => {
       fakeContext("/workspace", [storedEntry, userEntry]),
       undefined,
     );
-    expect(result.content[0]?.text).toContain("Apply only these user-approved review fixes");
+    expect(result.content[0]?.text).toContain("Apply only these approved review fixes");
     expect(result.content[0]?.text).toContain("commitMessage");
     expect(result.content[0]?.text).toContain("do not use generic review-workflow wording");
     const reviewEntry = state.entries.at(-1);
