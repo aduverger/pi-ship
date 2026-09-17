@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import type {
   ExtensionAPI,
@@ -57,6 +57,7 @@ interface FakePiState {
   messages: Array<{ content: string }>;
   commands: Array<{ command: string; args: string[] }>;
   existingPullRequest?: { number: number; url: string; isDraft?: boolean };
+  failCommitOnceIn?: string;
 }
 
 function latestRun(state: FakePiState): ShipRun {
@@ -95,6 +96,10 @@ function fakePi(state: FakePiState): ExtensionAPI {
     }
     if (command === "git" && (args[0] === "fetch" || args[0] === "push")) {
       return { stdout: "", stderr: "", code: 0, killed: false };
+    }
+    if (command === "git" && args[0] === "commit" && basename(options?.cwd ?? "") === state.failCommitOnceIn) {
+      delete state.failCommitOnceIn;
+      return { stdout: "", stderr: "commit hook failed", code: 1, killed: false };
     }
     try {
       const result = await execFileAsync(command, args, {
@@ -376,6 +381,77 @@ describe("ShipWorkflow", () => {
       "test: cover API contract",
     );
     expect(reviewerManifest?.repositories[0]?.testCuration).toMatchObject({ added: 1, removed: 0 });
+  });
+
+  it("resumes test-curation commits after a later repository commit fails", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-testing-resume-"));
+    const api = await createClonedRepository(workspace, "api", true);
+    const frontend = await createClonedRepository(workspace, "frontend", true);
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    const ctx = fakeContext(workspace);
+    const workflow = new ShipWorkflow(fakePi(state), passingReviewer);
+    await workflow.start("", ctx);
+    await workflow.handleReport(
+      {
+        action: "simplification-complete",
+        intent: "Update API and frontend coverage.",
+        repositories: ["api", "frontend"].map((repository) => ({
+          repository,
+          summary: `Updated ${repository}.`,
+          tests: [{ command: "no tests", status: "skipped" as const, summary: "fixture repository" }],
+        })),
+      },
+      ctx,
+      undefined,
+    );
+
+    await writeFile(join(api, "file.test.ts"), "export {};\n", "utf8");
+    await writeFile(join(frontend, "file.test.ts"), "export {};\n", "utf8");
+    const reports = ["api", "frontend"].map((repository) => ({
+      repository,
+      summary: `Updated ${repository} with contract coverage.`,
+      commitMessage: `test: cover ${repository} contract`,
+      tests: [{ command: "no tests", status: "skipped" as const, summary: "fixture repository" }],
+      testCuration: {
+        added: 1,
+        rewritten: 0,
+        consolidated: 0,
+        removed: 0,
+        behaviors: [`${repository} contract`],
+        remainingGaps: [],
+      },
+    }));
+    state.failCommitOnceIn = "frontend";
+
+    await expect(
+      workflow.handleReport({ action: "testing-complete", repositories: reports }, ctx, undefined),
+    ).rejects.toThrow("commit hook failed");
+    expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: api }).then(({ stdout }) => stdout.trim())).toBe(
+      "test: cover api contract",
+    );
+    expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: frontend }).then(({ stdout }) => stdout.trim())).toBe(
+      "change",
+    );
+
+    const storedEntry = {
+      type: "custom",
+      customType: "pi-ship-state",
+      data: structuredClone(latestRun(state)),
+    } as SessionEntry;
+    const resumed = new ShipWorkflow(fakePi(state), passingReviewer);
+    const resumedContext = fakeContext(workspace, [storedEntry]);
+    resumed.restore(resumedContext);
+    await resumed.resume(resumedContext);
+
+    const reviewed = await resumed.handleReport(
+      { action: "testing-complete", repositories: reports },
+      resumedContext,
+      undefined,
+    );
+    expect(reviewed.content[0]?.text).toContain("No actionable findings");
+    expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: frontend }).then(({ stdout }) => stdout.trim())).toBe(
+      "test: cover frontend contract",
+    );
   });
 
   it("persists auto mode and applies agent decisions without a user response", async () => {

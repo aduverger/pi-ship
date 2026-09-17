@@ -546,6 +546,8 @@ export class ShipWorkflow {
     }
     for (const { repository, commitMessage } of pendingCommits) {
       await this.commitIfDirty(repository, commitMessage);
+      await this.refreshRepository(repository);
+      this.persist(ctx);
     }
     for (const repository of reviewRepositories(this.run)) await this.refreshRepository(repository);
     this.persist(ctx);
