@@ -34,6 +34,7 @@ import type {
   FindingDecision,
   PullRequestDraft,
   RepositoryReport,
+  ReviewFinding,
   ShipRepositoryState,
   ShipReportInput,
   ShipRun,
@@ -97,6 +98,24 @@ function latestReviewRound(run: ShipRun): number {
 
 function reachedAutoReviewLimit(run: ShipRun): boolean {
   return run.auto === true && latestReviewRound(run) >= AUTO_REVIEW_LIMIT;
+}
+
+interface CappedFindingOutcome {
+  finding: ReviewFinding;
+  decision: FindingDecision;
+}
+
+function cappedFindingOutcomes(run: ShipRun): CappedFindingOutcome[] {
+  if (!run.auto) return [];
+  return storedReviews(run)
+    .filter((review) => review.round >= AUTO_REVIEW_LIMIT)
+    .flatMap((review) => {
+      const findingsById = new Map(review.result.findings.map((finding) => [finding.id, finding]));
+      return (review.decisions ?? []).flatMap((decision) => {
+        const finding = findingsById.get(decision.findingId);
+        return finding && decision.action !== "fix" ? [{ finding, decision }] : [];
+      });
+    });
 }
 
 function isStoredRun(value: unknown): value is ShipRun {
@@ -829,15 +848,16 @@ export class ShipWorkflow {
   }
 
   private buildCappedFindingGuidance(): string {
-    const run = this.run;
-    if (!run?.review || !reachedAutoReviewLimit(run) || run.review.result.findings.length === 0) return "";
-    const findings = run.review.result.findings
-      .map(
-        (finding) =>
-          `- [${finding.severity}] ${finding.repository}: ${finding.title}\n  Impact: ${finding.impact}\n  Follow-up: ${finding.recommendation}`,
-      )
+    if (!this.run) return "";
+    const outcomes = cappedFindingOutcomes(this.run);
+    if (outcomes.length === 0) return "";
+    const findings = outcomes
+      .map(({ finding, decision }) => {
+        const context = decision.action === "accept" ? "Tradeoff" : "Follow-up";
+        return `- [${finding.severity}] ${finding.repository}: ${finding.title}\n  Impact: ${finding.impact}\n  ${context}: ${decision.rationale}`;
+      })
       .join("\n");
-    return `\n\nThe autonomous review limit was reached. Include every item below concisely in Risks or follow-ups for its named repository, with its severity, impact, and follow-up. Include it in another repository's PR only when it materially affects that PR. Do not label this as independent review or mention workflow internals.\n\n${findings}`;
+    return `\n\nThe autonomous review limit was reached. Include every item below concisely in Risks or follow-ups for its named repository, preserving its severity, impact, and supplied tradeoff or follow-up context. Include it in another repository's PR only when it materially affects that PR. Do not label this as independent review or mention workflow internals.\n\n${findings}`;
   }
 
   private formatReview(): string {
@@ -845,10 +865,9 @@ export class ShipWorkflow {
   }
 
   private hasCappedBlockingFindings(repositoryName: string): boolean {
-    const run = this.run;
-    if (!run?.review || !reachedAutoReviewLimit(run)) return false;
-    return run.review.result.findings.some(
-      (finding) =>
+    if (!this.run) return false;
+    return cappedFindingOutcomes(this.run).some(
+      ({ finding }) =>
         finding.severity === "blocking" &&
         (finding.repository === repositoryName || finding.relatedRepositories.includes(repositoryName)),
     );

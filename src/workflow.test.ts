@@ -367,9 +367,9 @@ describe("ShipWorkflow", () => {
     expect(finalRun.repositories.find(({ name }) => name === "frontend")?.pullRequestUrl).toBeUndefined();
   });
 
-  it("publishes fifth-round leftovers and returns a ready PR to draft for blocking findings", async () => {
+  it("preserves fifth-round outcomes through a base advance and returns an affected ready PR to draft", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "pi-ship-auto-cap-"));
-    await createClonedRepository(workspace, "api", true);
+    const api = await createClonedRepository(workspace, "api", true);
     const state: FakePiState = {
       entries: [],
       messages: [],
@@ -380,7 +380,31 @@ describe("ShipWorkflow", () => {
         isDraft: false,
       },
     };
-    const workflow = new ShipWorkflow(fakePi(state), blockingReviewer);
+    let reviewRound = 0;
+    const reviewer = async () => {
+      reviewRound += 1;
+      if (reviewRound > 1) return passingReviewer();
+      const review = await blockingReviewer();
+      return {
+        ...review,
+        findings: [
+          ...review.findings,
+          {
+            id: "R2",
+            repository: "api",
+            severity: "warning" as const,
+            file: "file.txt",
+            title: "Handle a theoretical edge case",
+            evidence: "The scenario is not reachable through the current API.",
+            impact: "A hypothetical caller could receive stale data.",
+            recommendation: "Add a speculative fallback.",
+            confidence: "medium" as const,
+            relatedRepositories: [],
+          },
+        ],
+      };
+    };
+    const workflow = new ShipWorkflow(fakePi(state), reviewer);
     const ctx = fakeContext(workspace);
     await workflow.start("--auto", ctx);
     await completeApiSimplification(workflow, ctx, "Ship the API change.");
@@ -395,7 +419,10 @@ describe("ShipWorkflow", () => {
       workflow.handleReport(
         {
           action: "decision",
-          decisions: [{ findingId: "R1", action: "fix", rationale: "Fix the contract." }],
+          decisions: [
+            { findingId: "R1", action: "fix", rationale: "Fix the contract." },
+            { findingId: "R2", action: "accept", rationale: "The current API prevents this theoretical case." },
+          ],
         },
         ctx,
         undefined,
@@ -405,14 +432,45 @@ describe("ShipWorkflow", () => {
     const drafting = await workflow.handleReport(
       {
         action: "decision",
-        decisions: [{ findingId: "R1", action: "defer", rationale: "Restore compatibility in follow-up." }],
+        decisions: [
+          { findingId: "R1", action: "defer", rationale: "Restore compatibility in follow-up." },
+          { findingId: "R2", action: "accept", rationale: "The current API prevents this theoretical case." },
+        ],
       },
       ctx,
       undefined,
     );
     expect(drafting.content[0]?.text).toContain("autonomous review limit was reached");
     expect(drafting.content[0]?.text).toContain("[blocking] api: Preserve the API contract");
-    expect(drafting.content[0]?.text).toContain("Risks or follow-ups");
+    expect(drafting.content[0]?.text).toContain("Follow-up: Restore compatibility in follow-up.");
+    expect(drafting.content[0]?.text).toContain("Tradeoff: The current API prevents this theoretical case.");
+    expect(drafting.content[0]?.text).not.toContain("Add a speculative fallback");
+
+    const baseSha = await execFileAsync("git", ["rev-parse", "refs/remotes/origin/main"], { cwd: api })
+      .then(({ stdout }) => stdout.trim());
+    const baseTree = await execFileAsync("git", ["rev-parse", `${baseSha}^{tree}`], { cwd: api })
+      .then(({ stdout }) => stdout.trim());
+    const advancedBaseSha = await execFileAsync(
+      "git",
+      ["commit-tree", baseTree, "-p", baseSha, "-m", "advance base"],
+      { cwd: api },
+    ).then(({ stdout }) => stdout.trim());
+    await git(api, ["update-ref", "refs/remotes/origin/main", advancedBaseSha]);
+
+    const deferredPublication = await workflow.handleReport(
+      {
+        action: "publish",
+        drafts: [{ repository: "api", title: "Update API", body: "## Risks or follow-ups\n\nRestore compatibility." }],
+      },
+      ctx,
+      undefined,
+    );
+    expect(deferredPublication.content[0]?.text).toContain("A default branch advanced after review");
+
+    const rereviewed = await completeApiSimplification(workflow, ctx, "Ship the API change.");
+    expect(rereviewed.content[0]?.text).toContain("No actionable findings");
+    expect(rereviewed.content[0]?.text).toContain("Follow-up: Restore compatibility in follow-up.");
+    expect(rereviewed.content[0]?.text).toContain("Tradeoff: The current API prevents this theoretical case.");
 
     await workflow.handleReport(
       {
