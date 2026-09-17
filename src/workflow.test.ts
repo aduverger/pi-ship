@@ -308,19 +308,18 @@ describe("ShipWorkflow", () => {
   it("renders auto-review progress in the existing banner only while reviewing", () => {
     const state: FakePiState = { entries: [], messages: [], commands: [] };
     const workflow = new ShipWorkflow(fakePi(state));
-    const baseRun = {
+    const run: ShipRun = {
       version: 1,
       id: "12345678-run",
       root: "/workspace",
+      stage: "testing",
       createdAt: 1,
       updatedAt: 1,
       auto: true,
       repositories: [],
       rebaseIndex: 0,
-    } satisfies Omit<ShipRun, "stage">;
-    let branch = [
-      { type: "custom", customType: "pi-ship-state", data: { ...baseRun, stage: "testing" } },
-    ] as SessionEntry[];
+    };
+    const branch = [{ type: "custom", customType: "pi-ship-state", data: run }] as SessionEntry[];
     const footerStatuses: Array<string | undefined> = [];
     const banners: Array<readonly string[] | undefined> = [];
     const ctx = {
@@ -335,9 +334,7 @@ describe("ShipWorkflow", () => {
     expect(footerStatuses).toEqual([undefined]);
     expect(banners.at(-1)?.[0]).toBe("Ship 12345678 — testing");
 
-    branch = [
-      { type: "custom", customType: "pi-ship-state", data: { ...baseRun, stage: "reviewing" } },
-    ] as SessionEntry[];
+    run.stage = "reviewing";
     workflow.restore(ctx);
     expect(footerStatuses).toEqual([undefined, undefined]);
     expect(banners.at(-1)?.[0]).toBe("Ship 12345678 — reviewing (auto review 0/5)");
