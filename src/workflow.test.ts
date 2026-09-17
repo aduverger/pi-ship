@@ -196,7 +196,7 @@ async function reportApiSimplification(
   );
 }
 
-async function completeApiSimplification(
+async function completeApiPreparation(
   workflow: ShipWorkflow,
   ctx: ExtensionCommandContext,
   intent: string,
@@ -386,7 +386,7 @@ describe("ShipWorkflow", () => {
     const ctx = fakeContext(workspace);
 
     await workflow.start("api --auto", ctx);
-    const reviewed = await completeApiSimplification(workflow, ctx, "Ship the API change.");
+    const reviewed = await completeApiPreparation(workflow, ctx, "Ship the API change.");
 
     expect(reviewed.content[0]?.text).toContain("call ship_report with action \"decision\"");
     expect(reviewed.content[0]?.text).toContain("Do not wait for user input");
@@ -422,7 +422,7 @@ describe("ShipWorkflow", () => {
     const ctx = fakeContext(workspace);
     await workflow.start("", ctx);
 
-    const reviewed = await completeApiSimplification(workflow, ctx, "Ship the coordinated API change.");
+    const reviewed = await completeApiPreparation(workflow, ctx, "Ship the coordinated API change.");
     expect(reviewed.content[0]?.text).toContain("No actionable findings");
     expect(reviewed.content[0]?.text).toContain("Call ship_report with action \"publish\"");
     expect(reviewed.content[0]?.text).toContain("Do not include an Independent review section");
@@ -503,7 +503,7 @@ describe("ShipWorkflow", () => {
     const workflow = new ShipWorkflow(fakePi(state), reviewer);
     const ctx = fakeContext(workspace);
     await workflow.start("--auto", ctx);
-    await completeApiSimplification(workflow, ctx, "Ship the API change.");
+    await completeApiPreparation(workflow, ctx, "Ship the API change.");
 
     const cappedRun = structuredClone(latestRun(state));
     cappedRun.stage = "awaiting-decision";
@@ -564,7 +564,7 @@ describe("ShipWorkflow", () => {
     );
     expect(deferredPublication.content[0]?.text).toContain("A default branch advanced after review");
 
-    const rereviewed = await completeApiSimplification(workflow, ctx, "Ship the API change.");
+    const rereviewed = await completeApiPreparation(workflow, ctx, "Ship the API change.");
     expect(rereviewed.content[0]?.text).toContain("No actionable findings");
     expect(rereviewed.content[0]?.text).toContain("Follow-up: Restore compatibility in follow-up.");
     expect(rereviewed.content[0]?.text).toContain("Tradeoff: The current API prevents this theoretical case.");
@@ -606,7 +606,7 @@ describe("ShipWorkflow", () => {
     const workflow = new ShipWorkflow(fakePi(state), passingReviewer);
     const ctx = fakeContext(workspace);
     await workflow.start("", ctx);
-    await completeApiSimplification(workflow, ctx, "Ship the API change.");
+    await completeApiPreparation(workflow, ctx, "Ship the API change.");
 
     await workflow.handleReport(
       {
@@ -657,7 +657,7 @@ describe("ShipWorkflow", () => {
     const workflow = new ShipWorkflow(fakePi(state), reviewer);
     const ctx = fakeContext(workspace);
     await workflow.start("", ctx);
-    const awaitingDecision = await completeApiSimplification(workflow, ctx, "Ship the API change.");
+    const awaitingDecision = await completeApiPreparation(workflow, ctx, "Ship the API change.");
     expect(awaitingDecision.content[0]?.text).toContain("Background you need first");
     expect(awaitingDecision.content[0]?.text).toContain("has not read the implementation");
     expect(awaitingDecision.content[0]?.text).toContain("the intended behavior");

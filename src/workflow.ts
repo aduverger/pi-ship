@@ -515,24 +515,23 @@ export class ShipWorkflow {
     const reports = this.validateReports(input.repositories, repositories.map((repository) => repository.name));
     await this.assertContextRepositoriesUnmodified("during test curation");
 
-    const repositoryNames = new Set(repositories.map((repository) => repository.name));
     const dirtyRepositories: ShipRepositoryState[] = [];
     for (const repository of reviewRepositories(this.run)) {
       const head = await requireGit(this.runCommand, repository.path, ["rev-parse", "HEAD"]);
       if (head !== repository.head) throw new Error(`${repository.name} was committed during test curation; pi-ship owns commits.`);
       if (!(await isClean(this.runCommand, repository.path))) {
-        if (!repositoryNames.has(repository.name)) {
-          throw new Error(`Test curation modified unchanged repository ${repository.name}.`);
-        }
+        if (!repository.changed) throw new Error(`Test curation modified unchanged repository ${repository.name}.`);
         dirtyRepositories.push(repository);
       }
     }
 
-    for (const repository of repositories) {
-      const report = reports.get(repository.name);
-      if (!report?.testCuration) throw new Error(`Test report for ${repository.name} requires testCuration.`);
-      this.validateTestCuration(repository.name, report.testCuration);
-    }
+    const preparedReports = repositories.map((repository) => {
+      const report = reports.get(repository.name)!;
+      const testCuration = report.testCuration;
+      if (!testCuration) throw new Error(`Test report for ${repository.name} requires testCuration.`);
+      this.validateTestCuration(repository.name, testCuration);
+      return { repository, report, testCuration };
+    });
     const pendingCommits = dirtyRepositories.map((repository) => {
       const commitMessage = reports.get(repository.name)?.commitMessage?.trim();
       if (!commitMessage) throw new Error(`Test report for ${repository.name} requires a commit message.`);
@@ -540,11 +539,10 @@ export class ShipWorkflow {
       return { repository, commitMessage };
     });
 
-    for (const repository of repositories) {
-      const report = reports.get(repository.name)!;
+    for (const { repository, report, testCuration } of preparedReports) {
       repository.summary = report.summary;
       repository.tests = report.tests;
-      repository.testCuration = structuredClone(report.testCuration!);
+      repository.testCuration = structuredClone(testCuration);
     }
     for (const { repository, commitMessage } of pendingCommits) {
       await this.commitIfDirty(repository, commitMessage);
