@@ -15,11 +15,21 @@ export interface TestExecution {
   summary?: string;
 }
 
+export interface TestCurationSummary {
+  added: number;
+  rewritten: number;
+  consolidated: number;
+  removed: number;
+  behaviors: string[];
+  remainingGaps: string[];
+}
+
 export interface RepositoryReport {
   repository: string;
   summary: string;
   commitMessage?: string;
   tests: TestExecution[];
+  testCuration?: TestCurationSummary;
 }
 
 export interface ReviewFinding {
@@ -61,6 +71,7 @@ export type ShipStage =
   | "rebasing"
   | "resolving-conflicts"
   | "simplifying"
+  | "testing"
   | "reviewing"
   | "awaiting-decision"
   | "fixing"
@@ -85,6 +96,7 @@ export interface ShipRepositoryState {
   simplifyScope: ChangedFile[];
   summary?: string;
   tests: TestExecution[];
+  testCuration?: TestCurationSummary;
   reviewedHead?: string;
   baseShaAtReview?: string;
   pushed: boolean;
@@ -117,7 +129,7 @@ export interface ShipRun {
 }
 
 export interface ShipReportInput {
-  action: "conflict-resolved" | "simplification-complete" | "decision" | "fixes-complete" | "publish";
+  action: "conflict-resolved" | "simplification-complete" | "testing-complete" | "decision" | "fixes-complete" | "publish";
   intent?: string;
   repositories?: RepositoryReport[];
   decisions?: FindingDecision[];
@@ -131,6 +143,7 @@ export interface ReviewerManifestRepository {
   baseBranch: string;
   branch: string;
   changed: boolean;
+  testCuration?: TestCurationSummary;
 }
 
 export interface ReviewerPriorDecision {

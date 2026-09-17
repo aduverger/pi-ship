@@ -52,6 +52,7 @@ const modules = [
   "reviewer-child",
   "reviewer",
   "simplify",
+  "testing",
   "types",
   "workflow",
 ];

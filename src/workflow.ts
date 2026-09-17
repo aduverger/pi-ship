@@ -30,6 +30,7 @@ import {
 } from "./review-display.js";
 import { collectReviewerDecisions, runWorkspaceReviewer } from "./reviewer.js";
 import { buildWorkspaceSimplificationPrompt } from "./simplify.js";
+import { buildWorkspaceTestingPrompt } from "./testing.js";
 import type {
   FindingDecision,
   PullRequestDraft,
@@ -39,6 +40,7 @@ import type {
   ShipReportInput,
   ShipRun,
   StoredReview,
+  TestCurationSummary,
   TestExecution,
 } from "./types.js";
 
@@ -55,6 +57,7 @@ const ACTIVE_STAGES = new Set<ShipRun["stage"]>([
   "rebasing",
   "resolving-conflicts",
   "simplifying",
+  "testing",
   "reviewing",
   "awaiting-decision",
   "fixing",
@@ -164,6 +167,8 @@ export class ShipWorkflow {
         return "pi-ship is applying approved review fixes. Make only the approved changes, run relevant tests in every changed repository, do not commit, then call ship_report with action fixes-complete.";
       case "simplifying":
         return "pi-ship is simplifying rebased changes. Follow the displayed changed-line scope, do not commit, then call ship_report with action simplification-complete.";
+      case "testing":
+        return "pi-ship is curating durable tests. Follow the displayed test scope and criteria, do not commit, then call ship_report with action testing-complete unless ambiguous behavior or out-of-scope production work requires user guidance.";
       case "resolving-conflicts":
         return "pi-ship is resolving a rebase conflict. Resolve and stage every unmerged path in the named repository, do not create a commit manually, then call ship_report with action conflict-resolved.";
       case "drafting":
@@ -263,6 +268,9 @@ export class ShipWorkflow {
       case "simplifying":
         prompt = buildWorkspaceSimplificationPrompt(this.run.repositories);
         break;
+      case "testing":
+        prompt = buildWorkspaceTestingPrompt(this.run.repositories);
+        break;
       case "reviewing":
         prompt = (await this.performReview(ctx)).content[0]?.text;
         break;
@@ -325,7 +333,9 @@ export class ShipWorkflow {
       case "conflict-resolved":
         return this.handleConflictResolved(ctx);
       case "simplification-complete":
-        return this.handleSimplificationComplete(input, ctx, signal, onProgress);
+        return this.handleSimplificationComplete(input, ctx);
+      case "testing-complete":
+        return this.handleTestingComplete(input, ctx, signal, onProgress);
       case "decision":
         return this.handleDecision(input, ctx);
       case "fixes-complete":
@@ -464,8 +474,6 @@ export class ShipWorkflow {
   private async handleSimplificationComplete(
     input: ShipReportInput,
     ctx: ExtensionContext,
-    signal: AbortSignal | undefined,
-    onProgress?: ProgressCallback,
   ): Promise<WorkflowResult> {
     if (!this.run || this.run.stage !== "simplifying") throw new Error("pi-ship is not in simplification stage.");
     if (!input.intent?.trim()) throw new Error("simplification-complete requires the workspace intent.");
@@ -491,6 +499,57 @@ export class ShipWorkflow {
       await this.commitIfDirty(repository, "refactor: simplify branch changes");
       await this.refreshRepository(repository);
     }
+    this.run.stage = "testing";
+    this.persist(ctx);
+    return this.result(buildWorkspaceTestingPrompt(this.run.repositories));
+  }
+
+  private async handleTestingComplete(
+    input: ShipReportInput,
+    ctx: ExtensionContext,
+    signal: AbortSignal | undefined,
+    onProgress?: ProgressCallback,
+  ): Promise<WorkflowResult> {
+    if (!this.run || this.run.stage !== "testing") throw new Error("pi-ship is not in testing stage.");
+    const repositories = [...changedRepositories(this.run)];
+    const reports = this.validateReports(input.repositories, repositories.map((repository) => repository.name));
+    await this.assertContextRepositoriesUnmodified("during test curation");
+
+    const repositoryNames = new Set(repositories.map((repository) => repository.name));
+    const dirtyRepositories: ShipRepositoryState[] = [];
+    for (const repository of reviewRepositories(this.run)) {
+      const head = await requireGit(this.runCommand, repository.path, ["rev-parse", "HEAD"]);
+      if (head !== repository.head) throw new Error(`${repository.name} was committed during test curation; pi-ship owns commits.`);
+      if (!(await isClean(this.runCommand, repository.path))) {
+        if (!repositoryNames.has(repository.name)) {
+          throw new Error(`Test curation modified unchanged repository ${repository.name}.`);
+        }
+        dirtyRepositories.push(repository);
+      }
+    }
+
+    for (const repository of repositories) {
+      const report = reports.get(repository.name);
+      if (!report?.testCuration) throw new Error(`Test report for ${repository.name} requires testCuration.`);
+      this.validateTestCuration(repository.name, report.testCuration);
+    }
+    const pendingCommits = dirtyRepositories.map((repository) => {
+      const commitMessage = reports.get(repository.name)?.commitMessage?.trim();
+      if (!commitMessage) throw new Error(`Test report for ${repository.name} requires a commit message.`);
+      if (commitMessage.includes("\n")) throw new Error(`Commit message for ${repository.name} must be one line.`);
+      return { repository, commitMessage };
+    });
+
+    for (const repository of repositories) {
+      const report = reports.get(repository.name)!;
+      repository.summary = report.summary;
+      repository.tests = report.tests;
+      repository.testCuration = structuredClone(report.testCuration!);
+    }
+    for (const { repository, commitMessage } of pendingCommits) {
+      await this.commitIfDirty(repository, commitMessage);
+    }
+    for (const repository of reviewRepositories(this.run)) await this.refreshRepository(repository);
     this.persist(ctx);
     return this.performReview(ctx, signal, onProgress);
   }
@@ -522,6 +581,7 @@ export class ShipWorkflow {
           baseBranch: repository.baseBranch,
           branch: repository.branch,
           changed: repository.changed,
+          ...(repository.testCuration ? { testCuration: repository.testCuration } : {}),
         })),
         priorDecisions: collectReviewerDecisions(storedReviews(this.run)),
       },
@@ -860,7 +920,7 @@ export class ShipWorkflow {
           `### ${repository.name}\n\nSummary:\n${repository.summary ?? "Inspect the final diff."}\n\nTests:\n${testsMarkdown(repository.tests) || "- Not reported"}`,
       )
       .join("\n\n");
-    return `Prepare one concise GitHub pull request title and body for every changed repository below. Each body must help a human reviewer who was not in this session and include: Intent, Changes, Decisions and tradeoffs, Testing, and Risks or follow-ups. In Testing, combine recurring routine gates—formatting, linting, static analysis, type checking, ordinary automated tests, and routine builds—into one short result line using category names instead of exact commands. Keep unusual environment setup, artifact inspection, migration validation, and manual behavioral verification as separate entries. Include a Cross-repository context section only when another selected repository materially affects the change, review, rollout, or testing; omit it for a single-repository ship or when there is no cross-repository context to flag. Do not include an Independent review section, review history, finding dispositions, secrets, or the raw conversation. Do not ask for publication confirmation; /ship already authorized it. Call ship_report with action "publish" and all drafts.\n\n## Workspace intent\n\n${this.run.intent}\n\n${repositories}${this.buildCappedFindingGuidance()}`;
+    return `Prepare one concise GitHub pull request title and body for every changed repository below. Each body must help a human reviewer who was not in this session and include: Intent, Changes, Decisions and tradeoffs, Testing, and Risks or follow-ups. Describe only the final deliverables and their rationale; do not mention the Simplify or Test workflow phases, test-curation counts, or internal phase activity. In Testing, combine recurring routine gates—formatting, linting, static analysis, type checking, ordinary automated tests, and routine builds—into one short result line using category names instead of exact commands. Keep unusual environment setup, artifact inspection, migration validation, and manual behavioral verification as separate entries. Include a Cross-repository context section only when another selected repository materially affects the change, review, rollout, or testing; omit it for a single-repository ship or when there is no cross-repository context to flag. Do not include an Independent review section, review history, finding dispositions, secrets, or the raw conversation. Do not ask for publication confirmation; /ship already authorized it. Call ship_report with action "publish" and all drafts.\n\n## Workspace intent\n\n${this.run.intent}\n\n${repositories}${this.buildCappedFindingGuidance()}`;
   }
 
   private buildCappedFindingGuidance(): string {
@@ -887,6 +947,22 @@ export class ShipWorkflow {
         finding.severity === "blocking" &&
         (finding.repository === repositoryName || finding.relatedRepositories.includes(repositoryName)),
     );
+  }
+
+  private validateTestCuration(repository: string, summary: TestCurationSummary): void {
+    for (const [name, count] of Object.entries({
+      added: summary.added,
+      rewritten: summary.rewritten,
+      consolidated: summary.consolidated,
+      removed: summary.removed,
+    })) {
+      if (!Number.isInteger(count) || count < 0) {
+        throw new Error(`Test report for ${repository} has invalid ${name} count.`);
+      }
+    }
+    for (const value of [...summary.behaviors, ...summary.remainingGaps]) {
+      if (!value.trim()) throw new Error(`Test report for ${repository} contains an empty curation detail.`);
+    }
   }
 
   private validateReports(

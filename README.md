@@ -1,6 +1,6 @@
 # @aduverger/pi-ship
 
-Workspace-aware shipping workflow for the [Pi coding agent](https://pi.dev): rebase, simplify, independently review, test, push, and open cross-linked draft GitHub pull requests.
+Workspace-aware shipping workflow for the [Pi coding agent](https://pi.dev): rebase, simplify, curate tests, independently review, validate, push, and open cross-linked draft GitHub pull requests.
 
 ![ship-it](https://media1.tenor.com/m/YEIeLVDQpxsAAAAC/shipping-ship.gif)
 
@@ -9,7 +9,7 @@ Workspace-aware shipping workflow for the [Pi coding agent](https://pi.dev): reb
 - Pi 0.84 or newer
 - Git
 - GitHub CLI (`gh`), authenticated for `github.com`
-- Clean, committed feature branches in repositories included in simplify/review
+- Clean, committed feature branches in repositories included in simplify/test/review
 - Clean default branches synchronized with `origin` in workspace context/config repositories
 
 ## Install
@@ -70,16 +70,17 @@ Operational commands:
 1. Validate that every selected repository is clean and committed.
 2. Fetch each origin and resolve its default branch independently of the configured upstream.
 3. Keep a default-branch repository only when its `HEAD` exactly matches the fetched remote, classifying it as workspace context/config; rebase changed feature branches.
-4. Simplify the listed changed-feature files, using Git line ranges as guidance rather than hard edit boundaries, then test and commit per repository.
-5. Launch one fresh, read-only Pi reviewer over the complete selected workspace. It inherits the active model, always uses high thinking, can page through complete Git diffs, and focuses on concrete, proportionate correctness and maintainability findings.
-6. Persist a visible repository-qualified findings summary in the active session branch and return the full review to the main agent for evidence-based reachability and proportionality analysis. Normal runs wait for a user decision; `--auto` runs immediately apply the agent's structured disposition. Later review rounds receive every prior decision and rationale so fixes are verified against updated guidance and accepted or deferred tradeoffs are not reported repeatedly.
-7. Apply approved fixes, test, commit each repository with a message describing its actual changes, and independently review the complete workspace again.
-8. Verify that every pushed SHA exactly matches the reviewed SHA and that default branches have not advanced.
-9. Push all changed branches, create or update one draft PR per changed repository, and cross-link related PRs.
+4. Simplify the listed changed-feature files, using Git line ranges as guidance rather than hard edit boundaries, run focused validation, and commit per repository.
+5. Curate branch-added or modified automated tests for durable confidence. Keep tests that protect observable behavior and survive behavior-preserving refactors; rewrite brittle but valuable tests, remove redundant or implementation-coupled tests, and add coverage only for meaningful gaps. Run the repository-standard affected validation and commit any changes per repository.
+6. Launch one fresh, read-only Pi reviewer over the complete selected workspace. It inherits the active model, always uses high thinking, can page through complete Git diffs, and focuses on concrete, proportionate correctness and maintainability findings, including the durability of tests introduced by later fixes.
+7. Persist a visible repository-qualified findings summary in the active session branch and return the full review to the main agent for evidence-based reachability and proportionality analysis. Normal runs wait for a user decision; `--auto` runs immediately apply the agent's structured disposition. Later review rounds receive every prior decision and rationale so fixes are verified against updated guidance and accepted or deferred tradeoffs are not reported repeatedly.
+8. Apply approved fixes, test, commit each repository with a message describing its actual changes, and independently review the complete workspace again.
+9. Verify that every pushed SHA exactly matches the reviewed SHA and that default branches have not advanced.
+10. Push all changed branches, create or update one draft PR per changed repository, and cross-link related PRs.
 
-Independent-review results stay in Pi and are not added as a dedicated PR section.
+Workflow-phase activity and independent-review results stay in Pi. Pull requests describe final changes and validation, not simplification or test-curation activity.
 
-Unchanged feature-branch repositories remain available to the reviewer as integration context and do not produce commits or PRs unless an approved review fix changes them. Default-branch context/config repositories remain available in the workspace but are excluded from simplification and independent review, and must stay unmodified throughout the run.
+Unchanged feature-branch repositories remain available to the reviewer as integration context and do not produce commits or PRs unless an approved review fix changes them. Default-branch context/config repositories remain available in the workspace but are excluded from simplification, test curation, and independent review, and must stay unmodified throughout the run.
 
 The changed-line simplification prompt is adapted from [MattDevy/pi-simplify](https://github.com/MattDevy/pi-extensions/tree/main/packages/pi-simplify). See [NOTICE.md](NOTICE.md).
 
@@ -88,7 +89,7 @@ The changed-line simplification prompt is adapted from [MattDevy/pi-simplify](ht
 - No dirty repository enters the workflow; default-branch repositories must exactly match their fetched remote and remain immutable workspace context.
 - Reviewer subprocess has no bash, edit, or write tools.
 - Rebased existing branches use `--force-with-lease` against the observed remote SHA.
-- A moved default branch restarts rebase, simplification, and review before publication.
+- A moved default branch restarts rebase, simplification, test curation, and review before publication.
 - Partial push/PR failures are resumable with `/ship resume`.
 - New PRs are created as drafts; existing PRs preserve their current readiness unless an auto run reaches its review cap with blocking findings, in which case affected PRs return to draft.
 - `/ship abort` aborts active rebases but preserves already completed rebases and commits.

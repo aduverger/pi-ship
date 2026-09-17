@@ -174,7 +174,7 @@ const blockingReviewer = async () => ({
   suggestedTests: [],
 });
 
-async function completeApiSimplification(
+async function reportApiSimplification(
   workflow: ShipWorkflow,
   ctx: ExtensionCommandContext,
   intent: string,
@@ -188,6 +188,36 @@ async function completeApiSimplification(
           repository: "api",
           summary: "Updated the API.",
           tests: [{ command: "no test suite", status: "skipped", summary: "fixture repository" }],
+        },
+      ],
+    },
+    ctx,
+    undefined,
+  );
+}
+
+async function completeApiSimplification(
+  workflow: ShipWorkflow,
+  ctx: ExtensionCommandContext,
+  intent: string,
+) {
+  await reportApiSimplification(workflow, ctx, intent);
+  return workflow.handleReport(
+    {
+      action: "testing-complete",
+      repositories: [
+        {
+          repository: "api",
+          summary: "Updated the API.",
+          tests: [{ command: "no test suite", status: "skipped", summary: "fixture repository" }],
+          testCuration: {
+            added: 0,
+            rewritten: 0,
+            consolidated: 0,
+            removed: 0,
+            behaviors: ["API contract"],
+            remainingGaps: [],
+          },
         },
       ],
     },
@@ -291,6 +321,63 @@ describe("ShipWorkflow", () => {
     ]);
   });
 
+  it("curates and commits tests between simplification and independent review", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-testing-"));
+    const api = await createClonedRepository(workspace, "api", true);
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    let reviewerManifest: ReviewerManifest | undefined;
+    const reviewer = async (_ctx: unknown, manifest: ReviewerManifest) => {
+      reviewerManifest = manifest;
+      return passingReviewer();
+    };
+    const workflow = new ShipWorkflow(fakePi(state), reviewer);
+    const ctx = fakeContext(workspace);
+    await workflow.start("", ctx);
+
+    const testing = await reportApiSimplification(workflow, ctx, "Ship the API change.");
+    expect(testing.content[0]?.text).toContain("durable confidence");
+    expect(testing.content[0]?.text).toContain("behavior-preserving refactor");
+    expect(latestRun(state).stage).toBe("testing");
+
+    await writeFile(join(api, "file.test.ts"), "export {};\n", "utf8");
+    const report = {
+      action: "testing-complete" as const,
+      repositories: [
+        {
+          repository: "api",
+          summary: "Updated the API and added contract coverage.",
+          tests: [{ command: "no test suite", status: "skipped" as const, summary: "fixture repository" }],
+          testCuration: {
+            added: 1,
+            rewritten: 0,
+            consolidated: 0,
+            removed: 0,
+            behaviors: ["API contract"],
+            remainingGaps: [],
+          },
+        },
+      ],
+    };
+    await expect(workflow.handleReport(report, ctx, undefined)).rejects.toThrow(
+      "Test report for api requires a commit message",
+    );
+
+    const reviewed = await workflow.handleReport(
+      {
+        ...report,
+        repositories: [{ ...report.repositories[0]!, commitMessage: "test: cover API contract" }],
+      },
+      ctx,
+      undefined,
+    );
+
+    expect(reviewed.content[0]?.text).toContain("No actionable findings");
+    expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: api }).then(({ stdout }) => stdout.trim())).toBe(
+      "test: cover API contract",
+    );
+    expect(reviewerManifest?.repositories[0]?.testCuration).toMatchObject({ added: 1, removed: 0 });
+  });
+
   it("persists auto mode and applies agent decisions without a user response", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "pi-ship-auto-"));
     await createClonedRepository(workspace, "api", true);
@@ -343,6 +430,7 @@ describe("ShipWorkflow", () => {
     expect(reviewed.content[0]?.text).toContain("omit it for a single-repository ship");
     expect(reviewed.content[0]?.text).toContain("combine recurring routine gates");
     expect(reviewed.content[0]?.text).toContain("category names instead of exact commands");
+    expect(reviewed.content[0]?.text).toContain("do not mention the Simplify or Test workflow phases");
     expect(reviewed.content[0]?.text).not.toContain("## Review history");
     expect(state.entries.some((entry) => entry.customType === "pi-ship-review")).toBe(true);
     expect(workflow.status(ctx)).toContain("Independent review round 1 — pass");
@@ -680,6 +768,26 @@ describe("ShipWorkflow", () => {
             tests: [{ command: "no tests", status: "skipped", summary: "fixture repository" }],
           },
         ],
+      },
+      ctx,
+      undefined,
+    );
+    await workflow.handleReport(
+      {
+        action: "testing-complete",
+        repositories: ["api", "frontend"].map((repository) => ({
+          repository,
+          summary: `Updated ${repository}.`,
+          tests: [{ command: "no tests", status: "skipped" as const, summary: "fixture repository" }],
+          testCuration: {
+            added: 0,
+            rewritten: 0,
+            consolidated: 0,
+            removed: 0,
+            behaviors: [`${repository} contract`],
+            remainingGaps: [],
+          },
+        })),
       },
       ctx,
       undefined,

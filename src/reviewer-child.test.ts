@@ -31,6 +31,9 @@ describe("reviewer policy", () => {
     expect(REVIEW_SYSTEM_PROMPT).toContain("solely for hypothetical edge cases");
     expect(REVIEW_SYSTEM_PROMPT).toContain("demonstrated maintenance or correctness risk");
     expect(REVIEW_SYSTEM_PROMPT).toContain("smallest proportionate recommendation");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("durable confidence");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("behavior-preserving implementation refactor");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("Do not demand tests for every method, branch, or theoretical edge case");
   });
 });
 

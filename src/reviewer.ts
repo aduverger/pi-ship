@@ -53,10 +53,13 @@ export function collectReviewerDecisions(
 
 export function buildReviewPrompt(manifest: ReviewerManifest): string {
   const repositories = manifest.repositories
-    .map(
-      (repository) =>
-        `- ${repository.name}: ${repository.changed ? "CHANGED — review complete diff" : "unchanged integration context"}\n  path: ${repository.path}\n  branch: ${repository.branch}\n  base: ${repository.baseRef}`,
-    )
+    .map((repository) => {
+      const curation = repository.testCuration;
+      const testContext = curation
+        ? `\n  internal test curation: ${curation.added} added, ${curation.rewritten} rewritten, ${curation.consolidated} consolidated, ${curation.removed} removed\n  protected behaviors: ${curation.behaviors.join("; ") || "none reported"}\n  remaining test gaps: ${curation.remainingGaps.join("; ") || "none reported"}`
+        : "";
+      return `- ${repository.name}: ${repository.changed ? "CHANGED — review complete diff" : "unchanged integration context"}\n  path: ${repository.path}\n  branch: ${repository.branch}\n  base: ${repository.baseRef}${testContext}`;
+    })
     .join("\n");
   const priorDecisions = manifest.priorDecisions ?? [];
   const priorDecisionSection = priorDecisions.length > 0
@@ -83,6 +86,8 @@ ${repositories}
 ${priorDecisionSection}
 
 These decisions refine the original intent. For a fix decision, verify the implementation against its rationale; the rationale overrides conflicting language in the original finding or intent. For an accept or defer decision, do not report the same concern again unless the implementation materially changes its evidence, likelihood, or impact. Every recommendation must remain proportionate to the demonstrated risk.
+
+Test-curation summaries are internal evidence, not requirements or pull-request content. They predate any later review fixes, so verify their claims against the current diff and apply the review policy independently.
 
 Use ship_git to inspect every changed repository's summary, name-status, complete diff, and commit history. When ship_git returns a nextCursor, repeat the same request with that cursor until complete is true. Read surrounding implementation and selected unchanged repositories where needed. Check cross-repository contracts explicitly. Do not edit files. Finish by calling submit_review exactly once.`;
 }

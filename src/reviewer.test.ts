@@ -90,7 +90,24 @@ describe("reviewer context", () => {
     const manifest: ReviewerManifest = {
       root: "/workspace",
       intent: "Ship the feature",
-      repositories: [],
+      repositories: [
+        {
+          name: "api",
+          path: "/workspace/api",
+          baseRef: "refs/remotes/origin/main",
+          baseBranch: "main",
+          branch: "feature",
+          changed: true,
+          testCuration: {
+            added: 1,
+            rewritten: 2,
+            consolidated: 0,
+            removed: 3,
+            behaviors: ["API compatibility"],
+            remainingGaps: ["External service integration"],
+          },
+        },
+      ],
       priorDecisions: collectReviewerDecisions([review]),
     };
     const prompt = buildReviewPrompt(manifest);
@@ -99,5 +116,8 @@ describe("reviewer context", () => {
     expect(prompt).toContain("DEFERRED (frontend): Deferred work");
     expect(prompt).toContain("FIXED (api): Fixed bug");
     expect(prompt).toContain("the rationale overrides conflicting language");
+    expect(prompt).toContain("1 added, 2 rewritten, 0 consolidated, 3 removed");
+    expect(prompt).toContain("protected behaviors: API compatibility");
+    expect(prompt).toContain("internal evidence, not requirements");
   });
 });
