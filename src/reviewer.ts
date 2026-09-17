@@ -78,11 +78,11 @@ ${manifest.intent}
 
 ${repositories}
 
-## Prior user decisions and guidance
+## Prior review decisions and guidance
 
 ${priorDecisionSection}
 
-These decisions refine the original intent. For a fix decision, verify the implementation against its user rationale; the rationale overrides conflicting language in the original finding or intent. For an accept or defer decision, do not report the same concern again unless the implementation materially changes its evidence, likelihood, or impact. Every recommendation must remain proportionate to the demonstrated risk.
+These decisions refine the original intent. For a fix decision, verify the implementation against its rationale; the rationale overrides conflicting language in the original finding or intent. For an accept or defer decision, do not report the same concern again unless the implementation materially changes its evidence, likelihood, or impact. Every recommendation must remain proportionate to the demonstrated risk.
 
 Use ship_git to inspect every changed repository's summary, name-status, complete diff, and commit history. When ship_git returns a nextCursor, repeat the same request with that cursor until complete is true. Read surrounding implementation and selected unchanged repositories where needed. Check cross-repository contracts explicitly. Do not edit files. Finish by calling submit_review exactly once.`;
 }

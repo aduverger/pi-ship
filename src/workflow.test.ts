@@ -56,7 +56,7 @@ interface FakePiState {
   entries: Array<{ customType: string; data: unknown }>;
   messages: Array<{ content: string }>;
   commands: Array<{ command: string; args: string[] }>;
-  existingPullRequest?: { number: number; url: string };
+  existingPullRequest?: { number: number; url: string; isDraft?: boolean };
 }
 
 function fakePi(state: FakePiState): ExtensionAPI {
@@ -72,7 +72,7 @@ function fakePi(state: FakePiState): ExtensionAPI {
         const repository = args[args.indexOf("--repo") + 1];
         return { stdout: `https://github.com/${repository}/pull/1\n`, stderr: "", code: 0, killed: false };
       }
-      if (args[0] === "pr" && args[1] === "edit") {
+      if (args[0] === "pr" && (args[1] === "edit" || args[1] === "ready")) {
         return { stdout: "", stderr: "", code: 0, killed: false };
       }
       throw new Error(`Unexpected gh command: ${args.join(" ")}`);
@@ -133,6 +133,27 @@ const passingReviewer = async () => ({
   verdict: "pass" as const,
   summary: "Workspace contracts are consistent.",
   findings: [],
+  residualRisks: [],
+  suggestedTests: [],
+});
+
+const blockingReviewer = async () => ({
+  verdict: "findings" as const,
+  summary: "One blocking finding.",
+  findings: [
+    {
+      id: "R1",
+      repository: "api",
+      severity: "blocking" as const,
+      file: "file.txt",
+      title: "Preserve the API contract",
+      evidence: "The changed fixture breaks the contract.",
+      impact: "Existing clients can fail.",
+      recommendation: "Restore compatibility before merging.",
+      confidence: "high" as const,
+      relatedRepositories: [],
+    },
+  ],
   residualRisks: [],
   suggestedTests: [],
 });
@@ -254,6 +275,36 @@ describe("ShipWorkflow", () => {
     ]);
   });
 
+  it("persists auto mode and applies agent decisions without a user response", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-auto-"));
+    await createClonedRepository(workspace, "api", true);
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    const workflow = new ShipWorkflow(fakePi(state), blockingReviewer);
+    const ctx = fakeContext(workspace);
+
+    await workflow.start("api --auto", ctx);
+    const reviewed = await completeApiSimplification(workflow, ctx, "Ship the API change.");
+
+    expect(reviewed.content[0]?.text).toContain("call ship_report with action \"decision\"");
+    expect(reviewed.content[0]?.text).toContain("Do not wait for user input");
+    expect(reviewed.content[0]?.text).toContain("authoritative fixtures");
+    expect(reviewed.content[0]?.text).toContain("realistically reachable, or theoretical");
+    expect(workflow.status(ctx)).toContain("auto, review round 1/5");
+    expect((state.entries.at(-2)?.data as ShipRun).auto).toBe(true);
+
+    const decision = await workflow.handleReport(
+      {
+        action: "decision",
+        decisions: [{ findingId: "R1", action: "fix", rationale: "Directly reachable contract break." }],
+      },
+      ctx,
+      undefined,
+    );
+
+    expect(decision.content[0]?.text).toContain("Apply only these approved review fixes");
+    expect((state.entries.at(-2)?.data as ShipRun).stage).toBe("fixing");
+  });
+
   it("reviews, force-with-lease pushes, and publishes without a final confirmation", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "pi-ship-publish-"));
     await createClonedRepository(workspace, "api", true);
@@ -274,6 +325,8 @@ describe("ShipWorkflow", () => {
     expect(reviewed.content[0]?.text).toContain("Do not include an Independent review section");
     expect(reviewed.content[0]?.text).toContain("Include a Cross-repository context section only when");
     expect(reviewed.content[0]?.text).toContain("omit it for a single-repository ship");
+    expect(reviewed.content[0]?.text).toContain("combine recurring routine gates");
+    expect(reviewed.content[0]?.text).toContain("category names instead of exact commands");
     expect(reviewed.content[0]?.text).not.toContain("## Review history");
     expect(state.entries.some((entry) => entry.customType === "pi-ship-review")).toBe(true);
     expect(workflow.status(ctx)).toContain("Independent review round 1 — pass");
@@ -304,6 +357,68 @@ describe("ShipWorkflow", () => {
     const finalRun = state.entries.at(-1)?.data as ShipRun;
     expect(finalRun.stage).toBe("complete");
     expect(finalRun.repositories.find(({ name }) => name === "frontend")?.pullRequestUrl).toBeUndefined();
+  });
+
+  it("publishes fifth-round leftovers and returns a ready PR to draft for blocking findings", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-auto-cap-"));
+    await createClonedRepository(workspace, "api", true);
+    const state: FakePiState = {
+      entries: [],
+      messages: [],
+      commands: [],
+      existingPullRequest: {
+        number: 7,
+        url: "https://github.com/example/api/pull/7",
+        isDraft: false,
+      },
+    };
+    const workflow = new ShipWorkflow(fakePi(state), blockingReviewer);
+    const ctx = fakeContext(workspace);
+    await workflow.start("--auto", ctx);
+    await completeApiSimplification(workflow, ctx, "Ship the API change.");
+
+    const cappedRun = structuredClone(state.entries.at(-2)?.data) as ShipRun;
+    cappedRun.stage = "awaiting-decision";
+    cappedRun.review!.round = 5;
+    const cappedEntry = { type: "custom", customType: "pi-ship-state", data: cappedRun } as SessionEntry;
+    workflow.restore(fakeContext(workspace, [cappedEntry]));
+
+    await expect(
+      workflow.handleReport(
+        {
+          action: "decision",
+          decisions: [{ findingId: "R1", action: "fix", rationale: "Fix the contract." }],
+        },
+        ctx,
+        undefined,
+      ),
+    ).rejects.toThrow("record fix-worthy findings as defer");
+
+    const drafting = await workflow.handleReport(
+      {
+        action: "decision",
+        decisions: [{ findingId: "R1", action: "defer", rationale: "Restore compatibility in follow-up." }],
+      },
+      ctx,
+      undefined,
+    );
+    expect(drafting.content[0]?.text).toContain("autonomous review limit was reached");
+    expect(drafting.content[0]?.text).toContain("[blocking] api: Preserve the API contract");
+    expect(drafting.content[0]?.text).toContain("Risks or follow-ups");
+
+    await workflow.handleReport(
+      {
+        action: "publish",
+        drafts: [{ repository: "api", title: "Update API", body: "## Risks or follow-ups\n\nRestore compatibility." }],
+      },
+      ctx,
+      undefined,
+    );
+
+    const readyCommand = state.commands.find(
+      ({ command, args }) => command === "gh" && args[0] === "pr" && args[1] === "ready",
+    );
+    expect(readyCommand?.args).toEqual(["pr", "ready", "7", "--repo", "example/api", "--undo"]);
   });
 
   it("updates an existing PR without changing its readiness", async () => {
@@ -418,6 +533,8 @@ describe("ShipWorkflow", () => {
     expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: api }).then(({ stdout }) => stdout.trim())).toBe(
       "fix: update API fixture",
     );
+    expect(awaitingDecision.content[0]?.text).toContain("distinguish technical validity");
+    expect(awaitingDecision.content[0]?.text).toContain("Prefer accept or defer for theoretical cases");
   });
 
   it("validates every review-fix commit message before committing any repository", async () => {
@@ -628,7 +745,7 @@ describe("ShipWorkflow", () => {
       fakeContext("/workspace", [storedEntry, userEntry]),
       undefined,
     );
-    expect(result.content[0]?.text).toContain("Apply only these user-approved review fixes");
+    expect(result.content[0]?.text).toContain("Apply only these approved review fixes");
     expect(result.content[0]?.text).toContain("commitMessage");
     expect(result.content[0]?.text).toContain("do not use generic review-workflow wording");
     const reviewEntry = state.entries.at(-1);

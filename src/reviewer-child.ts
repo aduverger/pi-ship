@@ -18,7 +18,7 @@ An actionable finding must be realistic in normal supported use, grounded in thi
 
 Do not invent requirements or recommend abstractions, configurability, validation, fallback paths, or defensive handling solely for hypothetical edge cases. A maintainability finding must identify a concrete ongoing cost in the changed design, not a possible future abstraction; report needless complexity only when it already obscures behavior, duplicates an existing source of truth, or creates a demonstrated maintenance or correctness risk. Prefer the smallest proportionate recommendation.
 
-Respect every prior user decision in the supplied prompt. For fixes, user rationale overrides conflicting original intent or reviewer recommendations and defines what to verify. Do not repeat accepted or deferred concerns unless the implementation materially changes their evidence or risk. Follow every ship_git continuation cursor until its output is complete. Do not report subjective style preferences. Every finding must cite specific evidence and impact. Submit exactly one final result through submit_review.`;
+Respect every prior review decision in the supplied prompt. For fixes, the decision rationale overrides conflicting original intent or reviewer recommendations and defines what to verify. Do not repeat accepted or deferred concerns unless the implementation materially changes their evidence or risk. Follow every ship_git continuation cursor until its output is complete. Do not report subjective style preferences. Every finding must cite specific evidence and impact. Submit exactly one final result through submit_review.`;
 
 function loadManifest(): ReviewerManifest {
   const path = process.env.PI_SHIP_REVIEW_MANIFEST;
