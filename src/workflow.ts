@@ -825,18 +825,19 @@ export class ShipWorkflow {
           `### ${repository.name}\n\nSummary:\n${repository.summary ?? "Inspect the final diff."}\n\nTests:\n${testsMarkdown(repository.tests) || "- Not reported"}`,
       )
       .join("\n\n");
-    const cappedFindings = reachedAutoReviewLimit(this.run) && this.run.review
-      ? this.run.review.result.findings
-          .map(
-            (finding) =>
-              `- [${finding.severity}] ${finding.repository}: ${finding.title}\n  Impact: ${finding.impact}\n  Follow-up: ${finding.recommendation}`,
-          )
-          .join("\n")
-      : "";
-    const cappedFindingGuidance = cappedFindings
-      ? `\n\nThe autonomous review limit was reached. Include every item below concisely in Risks or follow-ups for its named repository, with its severity, impact, and follow-up. Include it in another repository's PR only when it materially affects that PR. Do not label this as independent review or mention workflow internals.\n\n${cappedFindings}`
-      : "";
-    return `Prepare one concise GitHub pull request title and body for every changed repository below. Each body must help a human reviewer who was not in this session and include: Intent, Changes, Decisions and tradeoffs, Testing, and Risks or follow-ups. In Testing, combine recurring routine gates—formatting, linting, static analysis, type checking, ordinary automated tests, and routine builds—into one short result line using category names instead of exact commands. Keep unusual environment setup, artifact inspection, migration validation, and manual behavioral verification as separate entries. Include a Cross-repository context section only when another selected repository materially affects the change, review, rollout, or testing; omit it for a single-repository ship or when there is no cross-repository context to flag. Do not include an Independent review section, review history, finding dispositions, secrets, or the raw conversation. Do not ask for publication confirmation; /ship already authorized it. Call ship_report with action "publish" and all drafts.\n\n## Workspace intent\n\n${this.run.intent}\n\n${repositories}${cappedFindingGuidance}`;
+    return `Prepare one concise GitHub pull request title and body for every changed repository below. Each body must help a human reviewer who was not in this session and include: Intent, Changes, Decisions and tradeoffs, Testing, and Risks or follow-ups. In Testing, combine recurring routine gates—formatting, linting, static analysis, type checking, ordinary automated tests, and routine builds—into one short result line using category names instead of exact commands. Keep unusual environment setup, artifact inspection, migration validation, and manual behavioral verification as separate entries. Include a Cross-repository context section only when another selected repository materially affects the change, review, rollout, or testing; omit it for a single-repository ship or when there is no cross-repository context to flag. Do not include an Independent review section, review history, finding dispositions, secrets, or the raw conversation. Do not ask for publication confirmation; /ship already authorized it. Call ship_report with action "publish" and all drafts.\n\n## Workspace intent\n\n${this.run.intent}\n\n${repositories}${this.buildCappedFindingGuidance()}`;
+  }
+
+  private buildCappedFindingGuidance(): string {
+    const run = this.run;
+    if (!run?.review || !reachedAutoReviewLimit(run) || run.review.result.findings.length === 0) return "";
+    const findings = run.review.result.findings
+      .map(
+        (finding) =>
+          `- [${finding.severity}] ${finding.repository}: ${finding.title}\n  Impact: ${finding.impact}\n  Follow-up: ${finding.recommendation}`,
+      )
+      .join("\n");
+    return `\n\nThe autonomous review limit was reached. Include every item below concisely in Risks or follow-ups for its named repository, with its severity, impact, and follow-up. Include it in another repository's PR only when it materially affects that PR. Do not label this as independent review or mention workflow internals.\n\n${findings}`;
   }
 
   private formatReview(): string {
@@ -845,13 +846,11 @@ export class ShipWorkflow {
 
   private hasCappedBlockingFindings(repositoryName: string): boolean {
     const run = this.run;
-    return Boolean(
-      run && reachedAutoReviewLimit(run) &&
-      run.review?.result.findings.some(
-        (finding) =>
-          finding.severity === "blocking" &&
-          (finding.repository === repositoryName || finding.relatedRepositories.includes(repositoryName)),
-      ),
+    if (!run?.review || !reachedAutoReviewLimit(run)) return false;
+    return run.review.result.findings.some(
+      (finding) =>
+        finding.severity === "blocking" &&
+        (finding.repository === repositoryName || finding.relatedRepositories.includes(repositoryName)),
     );
   }
 

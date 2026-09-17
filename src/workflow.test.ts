@@ -59,6 +59,14 @@ interface FakePiState {
   existingPullRequest?: { number: number; url: string; isDraft?: boolean };
 }
 
+function latestRun(state: FakePiState): ShipRun {
+  for (let index = state.entries.length - 1; index >= 0; index--) {
+    const entry = state.entries[index];
+    if (entry?.customType === "pi-ship-state") return entry.data as ShipRun;
+  }
+  throw new Error("No stored ship run.");
+}
+
 function fakePi(state: FakePiState): ExtensionAPI {
   const exec = async (command: string, args: string[], options?: CommandOptions): Promise<CommandResult> => {
     state.commands.push({ command, args });
@@ -190,7 +198,7 @@ describe("ShipWorkflow", () => {
 
     await workflow.start("", ctx);
 
-    const stored = state.entries.at(-1)?.data as ShipRun;
+    const stored = latestRun(state);
     expect(stored.stage).toBe("complete");
     expect(stored.repositories[0]).toMatchObject({
       name: "config",
@@ -267,7 +275,7 @@ describe("ShipWorkflow", () => {
     expect(state.messages[0]?.content).toContain("### api");
     expect(state.messages[0]?.content).not.toContain("### frontend");
     expect(await execFileAsync("git", ["status", "--porcelain"], { cwd: api }).then((result) => result.stdout)).toBe("");
-    const stored = state.entries.at(-1)?.data as ShipRun;
+    const stored = latestRun(state);
     expect(stored.stage).toBe("simplifying");
     expect(stored.repositories.map(({ name, changed }) => ({ name, changed }))).toEqual([
       { name: "api", changed: true },
@@ -290,7 +298,7 @@ describe("ShipWorkflow", () => {
     expect(reviewed.content[0]?.text).toContain("authoritative fixtures");
     expect(reviewed.content[0]?.text).toContain("realistically reachable, or theoretical");
     expect(workflow.status(ctx)).toContain("auto, review round 1/5");
-    expect((state.entries.at(-2)?.data as ShipRun).auto).toBe(true);
+    expect(latestRun(state).auto).toBe(true);
 
     const decision = await workflow.handleReport(
       {
@@ -302,7 +310,7 @@ describe("ShipWorkflow", () => {
     );
 
     expect(decision.content[0]?.text).toContain("Apply only these approved review fixes");
-    expect((state.entries.at(-2)?.data as ShipRun).stage).toBe("fixing");
+    expect(latestRun(state).stage).toBe("fixing");
   });
 
   it("reviews, force-with-lease pushes, and publishes without a final confirmation", async () => {
@@ -354,7 +362,7 @@ describe("ShipWorkflow", () => {
       ({ command, args }) => command === "gh" && args[0] === "pr" && args[1] === "create",
     );
     expect(createPullRequest?.args).toContain("--draft");
-    const finalRun = state.entries.at(-1)?.data as ShipRun;
+    const finalRun = latestRun(state);
     expect(finalRun.stage).toBe("complete");
     expect(finalRun.repositories.find(({ name }) => name === "frontend")?.pullRequestUrl).toBeUndefined();
   });
@@ -377,7 +385,7 @@ describe("ShipWorkflow", () => {
     await workflow.start("--auto", ctx);
     await completeApiSimplification(workflow, ctx, "Ship the API change.");
 
-    const cappedRun = structuredClone(state.entries.at(-2)?.data) as ShipRun;
+    const cappedRun = structuredClone(latestRun(state));
     cappedRun.stage = "awaiting-decision";
     cappedRun.review!.round = 5;
     const cappedEntry = { type: "custom", customType: "pi-ship-state", data: cappedRun } as SessionEntry;
