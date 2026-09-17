@@ -76,6 +76,14 @@ function fakePi(state: FakePiState): ExtensionAPI {
         const pullRequests = state.existingPullRequest ? [state.existingPullRequest] : [];
         return { stdout: JSON.stringify(pullRequests), stderr: "", code: 0, killed: false };
       }
+      if (args[0] === "pr" && args[1] === "view") {
+        return {
+          stdout: `${state.existingPullRequest?.isDraft ?? true}\n`,
+          stderr: "",
+          code: 0,
+          killed: false,
+        };
+      }
       if (args[0] === "pr" && args[1] === "create") {
         const repository = args[args.indexOf("--repo") + 1];
         return { stdout: `https://github.com/${repository}/pull/1\n`, stderr: "", code: 0, killed: false };
@@ -412,6 +420,7 @@ describe("ShipWorkflow", () => {
     const cappedRun = structuredClone(latestRun(state));
     cappedRun.stage = "awaiting-decision";
     cappedRun.review!.round = 5;
+    cappedRun.repositories[0]!.pullRequestUrl = "https://github.com/example/api/pull/7";
     const cappedEntry = { type: "custom", customType: "pi-ship-state", data: cappedRun } as SessionEntry;
     workflow.restore(fakeContext(workspace, [cappedEntry]));
 
@@ -484,7 +493,14 @@ describe("ShipWorkflow", () => {
     const readyCommand = state.commands.find(
       ({ command, args }) => command === "gh" && args[0] === "pr" && args[1] === "ready",
     );
-    expect(readyCommand?.args).toEqual(["pr", "ready", "7", "--repo", "example/api", "--undo"]);
+    expect(readyCommand?.args).toEqual([
+      "pr",
+      "ready",
+      "https://github.com/example/api/pull/7",
+      "--repo",
+      "example/api",
+      "--undo",
+    ]);
   });
 
   it("updates an existing PR without changing its readiness", async () => {

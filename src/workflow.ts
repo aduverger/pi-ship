@@ -705,6 +705,12 @@ export class ShipWorkflow {
       this.persist(ctx);
     }
 
+    for (const repository of changed) {
+      if (repository.pullRequestUrl && this.hasCappedBlockingFindings(repository.name)) {
+        await this.ensurePullRequestDraft(repository);
+      }
+    }
+
     const links = new Map(changed.flatMap((repository) => repository.pullRequestUrl ? [[repository.name, repository.pullRequestUrl] as const] : []));
     for (const repository of changed) {
       const draft = byRepository.get(repository.name);
@@ -738,23 +744,13 @@ export class ShipWorkflow {
   private async upsertPullRequest(repository: ShipRepositoryState, title: string, body: string): Promise<string> {
     const existing = await this.pi.exec(
       "gh",
-      ["pr", "list", "--repo", repository.githubRepository, "--head", repository.branch, "--state", "open", "--json", "number,url,isDraft"],
+      ["pr", "list", "--repo", repository.githubRepository, "--head", repository.branch, "--state", "open", "--json", "number,url"],
       { cwd: repository.path, timeout: 30_000 },
     );
     if (existing.code !== 0) throw new Error(`Could not list PRs for ${repository.name}: ${existing.stderr.trim()}`);
-    const [pullRequest] = JSON.parse(existing.stdout) as Array<{ number: number; url: string; isDraft: boolean }>;
+    const [pullRequest] = JSON.parse(existing.stdout) as Array<{ number: number; url: string }>;
     if (pullRequest) {
       await this.editPullRequest(repository, title, body, pullRequest.number);
-      if (!pullRequest.isDraft && this.hasCappedBlockingFindings(repository.name)) {
-        const demoted = await this.pi.exec(
-          "gh",
-          ["pr", "ready", String(pullRequest.number), "--repo", repository.githubRepository, "--undo"],
-          { cwd: repository.path, timeout: 30_000 },
-        );
-        if (demoted.code !== 0) {
-          throw new Error(`Could not convert PR to draft for ${repository.name}: ${demoted.stderr.trim()}`);
-        }
-      }
       return pullRequest.url;
     }
 
@@ -781,6 +777,26 @@ export class ShipWorkflow {
       if (created.code !== 0) throw new Error(`Could not create PR for ${repository.name}: ${created.stderr.trim()}`);
       return created.stdout.trim();
     });
+  }
+
+  private async ensurePullRequestDraft(repository: ShipRepositoryState): Promise<void> {
+    if (!repository.pullRequestUrl) throw new Error(`No PR URL for ${repository.name}.`);
+    const viewed = await this.pi.exec(
+      "gh",
+      ["pr", "view", repository.pullRequestUrl, "--repo", repository.githubRepository, "--json", "isDraft", "--jq", ".isDraft"],
+      { cwd: repository.path, timeout: 30_000 },
+    );
+    if (viewed.code !== 0) throw new Error(`Could not inspect PR readiness for ${repository.name}: ${viewed.stderr.trim()}`);
+    const isDraft = viewed.stdout.trim();
+    if (isDraft === "true") return;
+    if (isDraft !== "false") throw new Error(`Could not determine PR readiness for ${repository.name}.`);
+
+    const demoted = await this.pi.exec(
+      "gh",
+      ["pr", "ready", repository.pullRequestUrl, "--repo", repository.githubRepository, "--undo"],
+      { cwd: repository.path, timeout: 30_000 },
+    );
+    if (demoted.code !== 0) throw new Error(`Could not convert PR to draft for ${repository.name}: ${demoted.stderr.trim()}`);
   }
 
   private async editPullRequest(

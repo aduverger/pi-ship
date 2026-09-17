@@ -53,7 +53,7 @@ From a workspace directory that is not itself a Git repository, `/ship` discover
 /ship api frontend --auto
 ```
 
-`--auto` makes the agent's evidence-based review dispositions authoritative without waiting for user approval. It performs at most five independent review rounds, then publishes with any remaining findings disclosed as PR follow-ups. A ready PR with remaining blocking findings is returned to draft status.
+`--auto` makes the agent's evidence-based review dispositions authoritative without waiting for user approval. It stops applying fixes after the fifth independent review, then publishes with any remaining findings disclosed as PR follow-ups. If the base branch moves afterward, mandatory rebase validation may add review-only rounds; their findings are disclosed but not fixed. A ready PR with remaining blocking findings is returned to draft status.
 
 Operational commands:
 
@@ -90,7 +90,7 @@ The changed-line simplification prompt is adapted from [MattDevy/pi-simplify](ht
 - Rebased existing branches use `--force-with-lease` against the observed remote SHA.
 - A moved default branch restarts rebase, simplification, and review before publication.
 - Partial push/PR failures are resumable with `/ship resume`.
-- New PRs are created as drafts; existing PRs preserve their current ready or draft state.
+- New PRs are created as drafts; existing PRs preserve their current readiness unless an auto run reaches its review cap with blocking findings, in which case affected PRs return to draft.
 - `/ship abort` aborts active rebases but preserves already completed rebases and commits.
 
 ## Development
