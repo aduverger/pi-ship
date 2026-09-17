@@ -1,6 +1,6 @@
 {
   "name": "@aduverger/pi-ship",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Workspace-aware simplify, test curation, review, and GitHub pull request workflow for Pi.",
   "repository": {
     "type": "git",
