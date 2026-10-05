@@ -503,6 +503,8 @@ describe("ShipWorkflow", () => {
     expect(reviewed.content[0]?.text).toContain("Do not wait for user input");
     expect(reviewed.content[0]?.text).toContain("authoritative fixtures");
     expect(reviewed.content[0]?.text).toContain("realistically reachable, or theoretical");
+    expect(reviewed.content[0]?.text).toContain("Technical validity and a small patch are not sufficient");
+    expect(reviewed.content[0]?.text).not.toContain("trivial, unambiguous fix");
     expect(workflow.status(ctx)).toContain("auto, review round 1/5");
     expect(latestRun(state).auto).toBe(true);
 
@@ -785,14 +787,19 @@ describe("ShipWorkflow", () => {
       timestamp: new Date(Date.now() + 60_000).toISOString(),
       message: { role: "user", content: "Fix R1", timestamp: Date.now() + 60_000 },
     } as SessionEntry;
-    await workflow.handleReport(
+    const approvedRationale = "Remove the unnecessary guarantee and its tests; do not add a fallback.";
+    const fixing = await workflow.handleReport(
       {
         action: "decision",
-        decisions: [{ findingId: "R1", action: "fix", rationale: "Approved" }],
+        decisions: [{ findingId: "R1", action: "fix", rationale: approvedRationale }],
       },
       fakeContext(workspace, [userEntry]),
       undefined,
     );
+
+    expect(fixing.content[0]?.text).toContain(`Decision rationale: ${approvedRationale}`);
+    expect(fixing.content[0]?.text).toContain("Treat the approved decision rationale as authoritative over the original reviewer recommendation");
+    expect(fixing.content[0]?.text).toContain("remove its now-unnecessary machinery and tests within the approved scope");
 
     await writeFile(join(api, "file.txt"), "review fix\n", "utf8");
     await writeFile(join(api, "file.test.ts"), "export {};\n", "utf8");

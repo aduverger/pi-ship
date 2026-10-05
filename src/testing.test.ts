@@ -26,18 +26,18 @@ function repository(overrides: Partial<ShipRepositoryState> = {}): ShipRepositor
 }
 
 describe("buildWorkspaceTestingPrompt", () => {
-  it("defines durable test curation without imposing test churn", () => {
+  it("curates named risks within scope without automatic retention or forced deletion", () => {
     const prompt = buildWorkspaceTestingPrompt([
       repository(),
       repository({ name: "frontend", changed: false, simplifyScope: [] }),
     ]);
 
-    expect(prompt).toContain("plausible regression");
-    expect(prompt).toContain("behavior-preserving refactor");
-    expect(prompt).toContain("Keep a test when its value is uncertain");
-    expect(prompt).toContain("Whole snapshots and golden files are appropriate");
+    expect(prompt).toContain("name the plausible regression it detects and a behavior-preserving refactor it should survive");
+    expect(prompt).toContain("uncertainty alone is not a reason to keep a test");
+    expect(prompt).toContain("Preserve contractual, security, and data-integrity coverage");
+    expect(prompt).not.toContain("Keep a test when its value is uncertain");
     expect(prompt).toContain("do not perform a whole-suite cleanup");
-    expect(prompt).toContain("Do not force test churn");
+    expect(prompt).toContain("Do not force test churn or a deletion quota");
     expect(prompt).toContain('action "testing-complete"');
     expect(prompt).toContain("without mentioning workflow phases");
     expect(prompt).toContain("src/feature.ts (modified; changed lines: 4-8)");
