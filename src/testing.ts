@@ -25,9 +25,8 @@ The goal is durable confidence, not more tests, fewer tests, or a coverage targe
 ## Principles
 
 - **Test behavior, not structure**: Prefer observable outcomes, contracts, invariants, regressions, boundaries, and meaningful failure modes through stable public interfaces.
-- **Use two counterfactuals**: For each in-scope test, ask whether it would fail for a plausible regression and remain green after a plausible behavior-preserving refactor.
-- **Be conservative when removing**: Keep a test when its value is uncertain. Rewrite a valuable but brittle test instead of deleting its protection.
-- **Avoid false confidence**: Remove or consolidate tests that merely mirror private methods, branches, internal state, incidental call sequences, production logic, framework behavior, or coverage targets, or that duplicate protection without a distinct risk.
+- **Use two counterfactuals**: For each in-scope test, name the plausible regression it detects and a behavior-preserving refactor it should survive. Describe concrete wrong behavior, not just a covered branch or something it might catch.
+- **Require concrete protection**: Remove or consolidate tests that only pin private structure, incidental calls, production logic, framework behavior, coverage targets, or duplicate another test's protection without a distinct risk. Investigate uncertainty; uncertainty alone is not a reason to keep a test. Rewrite a valuable but brittle test at the smallest stable seam. Preserve contractual, security, and data-integrity coverage; a private seam is proportionate when a public-boundary fixture would obscure the same real invariant.
 - **Keep exact-output tests when exactness is contractual**: Whole snapshots and golden files are appropriate when consumers depend on the complete API payload, file format, generated artifact, or intentional CLI output. Otherwise prefer focused assertions on meaningful behavior.
 - **Keep tests clear and reliable**: Tests should be deterministic, isolated, readable, appropriately fast for their level, and use only the data needed to express the behavior.
 - **Respect test level**: Apply these criteria to every changed automated test. Integration and end-to-end tests may legitimately use broader boundaries and infrastructure than unit tests.
@@ -46,7 +45,7 @@ ${scopes}
 
 1. Read repository AGENTS.md or CLAUDE.md files, the complete branch diff, relevant public interfaces, and related tests.
 2. Identify the durable behaviors and risks the changed code should protect.
-3. Keep, rewrite, consolidate, remove, or add tests using the principles above. Do not force test churn when the existing coverage is appropriate.
+3. Check overlap and unnecessary assertions before adding coverage. Prefer readable table-driven cases for a distinct risk over near-identical tests. Add only a named missing risk. Remove tests for intentionally removed behavior; do not rewrite them to preserve obsolete architecture. Do not force test churn or a deletion quota when the existing coverage is appropriate.
 4. Do not weaken, exclude, or bypass tests through configuration changes.
 5. Do not commit; pi-ship owns commits.
 6. Run the repository-standard affected validation defined by project instructions, CI, and established scripts. Do not invoke production systems or require unavailable credentials; report unavailable checks as skipped with a reason.
@@ -54,7 +53,7 @@ ${scopes}
    - a summary of the final repository changes, without mentioning workflow phases;
    - exact validation commands and outcomes;
    - testCuration counts for added, rewritten, consolidated, and removed tests;
-   - testCuration behaviors listing important protection retained or added;
+   - testCuration behaviors naming protected contracts and risks rather than helper names or structural coverage; explain representative removals/consolidations and retained protection, or why no pruning candidates were found;
    - testCuration remainingGaps;
    - a concise one-line commitMessage if you edited that repository.
 

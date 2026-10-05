@@ -24,17 +24,12 @@ function readAllPages(output: string): { reconstructed: string; pages: number } 
 
 describe("reviewer policy", () => {
   it("requires concrete, proportionate findings", () => {
-    expect(REVIEW_SYSTEM_PROMPT).toContain("realistic in normal supported use");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("configuration drift");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("in residual risks instead of findings");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("Do not invent requirements");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("solely for hypothetical edge cases");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("demonstrated maintenance or correctness risk");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("smallest proportionate recommendation");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("only to tests and directly supporting snapshots, fixtures, or helpers");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("dedicated Test phase already owns it");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("behavior-preserving implementation refactor");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("Outside scope, inspect tests only for concrete correctness problems");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("do not maximize findings or hardening");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("a concrete supported trigger, the observable failure, and existing prevention or recovery");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("a specific redundant concept or concrete ongoing cost");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("Report a low-probability security or data-loss issue when the code exposes a direct, credible trigger");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("If that scope is empty, do not perform a general durability audit");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("Recommend removal or consolidation for tests that only pin structure or duplicate protection without a distinct risk");
   });
 });
 

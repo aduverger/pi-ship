@@ -29,11 +29,12 @@ export function buildWorkspaceSimplificationPrompt(repositories: readonly ShipRe
 
   return `The /ship workflow has rebased every changed repository. Simplify the committed changes below before test curation and independent review.
 
-First derive a concise workspace intent from the conversation: the user's goal, requirements, constraints, accepted decisions, and important tradeoffs. Preserve that intent for the reviewer and pull requests.
+First derive a concise workspace intent from the conversation: the user's goal, requirements, constraints, accepted decisions, and important tradeoffs. Preserve explicit non-goals, accepted operational assumptions, and rejected approaches. Distinguish user requirements from implementation choices introduced by the agent. Preserve that intent for the reviewer and pull requests.
 
 ## Principles
 
-- **Preserve functionality**: Never change what the code does. All existing tests must continue to pass.
+- **Preserve functionality**: Preserve agreed observable behavior and required safety guarantees. Do not silently remove additional product behavior merely because it was unrequested; report it as an intent mismatch for review disposition. A test of private structure is not itself a public contract; leave test curation to the Test phase.
+- **Subtract unnecessary architecture**: Compare the complete branch design with the agreed intent and the nearest existing implementation before cosmetic cleanup. Look for unnecessary layers, duplicate representations, persisted derived data, provider abstractions for one provider, new UI controls where shared ones exist, and workflow machinery justified only by hypothetical requirements. Remove or inline them only when observable behavior and required guarantees remain unchanged; prefer the existing domain path over merely polishing the new one.
 - **Apply project standards**: Read and follow CLAUDE.md or AGENTS.md in each repository.
 - **Enhance clarity**: Reduce unnecessary complexity and nesting, eliminate redundant code and abstractions, improve variable and function names, and consolidate related logic. Keep valuable comments that explain design rationale, business rules, non-obvious behaviour, or intent. Remove only truly redundant noise. Avoid nested ternary operators: prefer switch statements or if/else chains for multiple conditions.
 - **Maintain balance**: Do not over-simplify. Avoid clever solutions that are hard to understand. Do not combine too many concerns into one function. Do not remove helpful abstractions. Prioritize readability over fewer lines.
@@ -46,8 +47,8 @@ ${scopes}
 
 ## Process
 
-1. Work through each changed repository and file.
-2. Apply only concrete simplifications within the listed scope.
+1. Inspect the complete branch diff and relevant producers, consumers, and neighboring implementations, then work through each changed repository and file.
+2. Apply only concrete simplifications within the listed scope. Report intent mismatches in the repository summary for review; do not silently change behavior.
 3. Do not commit; pi-ship owns commits.
 4. Run focused existing tests needed to validate the simplification in every changed repository. If no suitable test exists, report it as skipped with a reason.
 5. Call ship_report with action "simplification-complete", the workspace intent, and one repository report per changed repository. Include every test command and outcome.

@@ -38,5 +38,8 @@ describe("buildWorkspaceSimplificationPrompt", () => {
     expect(prompt).toContain("they are not hard edit boundaries");
     expect(prompt).toContain("Other selected repositories are read-only context");
     expect(prompt).toContain("Review and modify only the files listed below");
+    expect(prompt).toContain("Preserve explicit non-goals, accepted operational assumptions, and rejected approaches");
+    expect(prompt).toContain("Remove or inline them only when observable behavior and required guarantees remain unchanged");
+    expect(prompt).toContain("report it as an intent mismatch for review disposition");
   });
 });
