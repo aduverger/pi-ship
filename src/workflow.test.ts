@@ -252,7 +252,36 @@ describe("ShipWorkflow", () => {
     expect(workflow.status(ctx)).toContain("workspace context");
   });
 
-  it("rejects committed changes on a default-branch context repository", async () => {
+  it("fast-forwards a default-branch context repository that is behind its remote", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "pi-ship-default-behind-"));
+    const config = await createClonedRepository(workspace, "config", false, "main");
+    const remoteHead = await execFileAsync("git", ["rev-parse", "refs/remotes/origin/main"], { cwd: config })
+      .then(({ stdout }) => stdout.trim());
+    const tree = await execFileAsync("git", ["rev-parse", `${remoteHead}^{tree}`], { cwd: config })
+      .then(({ stdout }) => stdout.trim());
+    const advancedRemoteHead = await execFileAsync(
+      "git",
+      ["commit-tree", tree, "-p", remoteHead, "-m", "advance remote"],
+      { cwd: config },
+    ).then(({ stdout }) => stdout.trim());
+    await git(config, ["update-ref", "refs/remotes/origin/main", advancedRemoteHead]);
+    const state: FakePiState = { entries: [], messages: [], commands: [] };
+    const workflow = new ShipWorkflow(fakePi(state));
+
+    await workflow.start("", fakeContext(workspace));
+
+    const head = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: config })
+      .then(({ stdout }) => stdout.trim());
+    expect(head).toBe(advancedRemoteHead);
+    expect(latestRun(state).repositories[0]).toMatchObject({
+      initialHead: advancedRemoteHead,
+      head: advancedRemoteHead,
+      contextOnly: true,
+      changed: false,
+    });
+  });
+
+  it("rejects local-only commits on a default-branch context repository", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "pi-ship-default-commits-"));
     const config = await createClonedRepository(workspace, "config", false, "main");
     await writeFile(join(config, "file.txt"), "local change\n", "utf8");
@@ -262,7 +291,7 @@ describe("ShipWorkflow", () => {
     const workflow = new ShipWorkflow(fakePi(state));
 
     await expect(workflow.start("", fakeContext(workspace))).rejects.toThrow(
-      "default-branch context repositories cannot contain committed changes",
+      "local commits not present in refs/remotes/origin/main",
     );
   });
 
