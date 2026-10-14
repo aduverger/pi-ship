@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
@@ -257,14 +257,13 @@ describe("ShipWorkflow", () => {
     const config = await createClonedRepository(workspace, "config", false, "main");
     const remoteHead = await execFileAsync("git", ["rev-parse", "refs/remotes/origin/main"], { cwd: config })
       .then(({ stdout }) => stdout.trim());
-    const tree = await execFileAsync("git", ["rev-parse", `${remoteHead}^{tree}`], { cwd: config })
+    await writeFile(join(config, "file.txt"), "remote update\n", "utf8");
+    await git(config, ["add", "."]);
+    await git(config, ["commit", "-m", "advance remote"]);
+    const advancedRemoteHead = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: config })
       .then(({ stdout }) => stdout.trim());
-    const advancedRemoteHead = await execFileAsync(
-      "git",
-      ["commit-tree", tree, "-p", remoteHead, "-m", "advance remote"],
-      { cwd: config },
-    ).then(({ stdout }) => stdout.trim());
     await git(config, ["update-ref", "refs/remotes/origin/main", advancedRemoteHead]);
+    await git(config, ["reset", "--hard", remoteHead]);
     const state: FakePiState = { entries: [], messages: [], commands: [] };
     const workflow = new ShipWorkflow(fakePi(state));
 
@@ -273,6 +272,7 @@ describe("ShipWorkflow", () => {
     const head = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: config })
       .then(({ stdout }) => stdout.trim());
     expect(head).toBe(advancedRemoteHead);
+    expect(await readFile(join(config, "file.txt"), "utf8")).toBe("remote update\n");
     expect(latestRun(state).repositories[0]).toMatchObject({
       initialHead: advancedRemoteHead,
       head: advancedRemoteHead,
@@ -281,18 +281,33 @@ describe("ShipWorkflow", () => {
     });
   });
 
-  it("rejects local-only commits on a default-branch context repository", async () => {
+  it.each(["ahead", "diverged"])("rejects an %s default branch without changing local commits", async (history) => {
     const workspace = await mkdtemp(join(tmpdir(), "pi-ship-default-commits-"));
     const config = await createClonedRepository(workspace, "config", false, "main");
     await writeFile(join(config, "file.txt"), "local change\n", "utf8");
     await git(config, ["add", "."]);
     await git(config, ["commit", "-m", "local change"]);
+    const localHead = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: config })
+      .then(({ stdout }) => stdout.trim());
+    if (history === "diverged") {
+      const remoteHead = await execFileAsync("git", ["rev-parse", "refs/remotes/origin/main"], { cwd: config })
+        .then(({ stdout }) => stdout.trim());
+      const tree = await execFileAsync("git", ["rev-parse", `${remoteHead}^{tree}`], { cwd: config })
+        .then(({ stdout }) => stdout.trim());
+      const advancedRemoteHead = await execFileAsync(
+        "git", ["commit-tree", tree, "-p", remoteHead, "-m", "remote change"], { cwd: config },
+      ).then(({ stdout }) => stdout.trim());
+      await git(config, ["update-ref", "refs/remotes/origin/main", advancedRemoteHead]);
+    }
     const state: FakePiState = { entries: [], messages: [], commands: [] };
     const workflow = new ShipWorkflow(fakePi(state));
 
     await expect(workflow.start("", fakeContext(workspace))).rejects.toThrow(
       "local commits not present in refs/remotes/origin/main",
     );
+    expect(await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: config })
+      .then(({ stdout }) => stdout.trim())).toBe(localHead);
+    expect(await readFile(join(config, "file.txt"), "utf8")).toBe("local change\n");
   });
 
   it("rejects uncommitted changes on a default-branch context repository", async () => {
