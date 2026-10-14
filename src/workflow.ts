@@ -352,14 +352,22 @@ export class ShipWorkflow {
     const githubRepository = parseGitHubRepository(origin);
     const baseBranch = await this.resolveBaseBranch(path, githubRepository);
     const baseRef = `refs/remotes/origin/${baseBranch}`;
-    const initialHead = await requireGit(this.runCommand, path, ["rev-parse", "HEAD"]);
+    let head = await requireGit(this.runCommand, path, ["rev-parse", "HEAD"]);
     const baseSha = await requireGit(this.runCommand, path, ["rev-parse", baseRef]);
     const remoteBranch = await git(this.runCommand, path, ["rev-parse", "--verify", `refs/remotes/origin/${branch}`]);
     const contextOnly = branch === baseBranch;
-    if (contextOnly && initialHead !== baseSha) {
-      throw new Error(
-        `${basename(path)} is checked out on its default branch ${baseBranch} but does not exactly match ${baseRef}; default-branch context repositories cannot contain committed changes.`,
-      );
+    if (contextOnly && head !== baseSha) {
+      const ancestry = await git(this.runCommand, path, ["merge-base", "--is-ancestor", head, baseRef]);
+      if (ancestry.code === 1) {
+        throw new Error(
+          `${basename(path)} is checked out on its default branch ${baseBranch} with local commits not present in ${baseRef}.`,
+        );
+      }
+      if (ancestry.code !== 0) {
+        throw new Error(`Could not compare ${basename(path)} with ${baseRef}: ${ancestry.stderr.trim()}`);
+      }
+      await requireGit(this.runCommand, path, ["merge", "--ff-only", baseRef], "fast-forward default branch");
+      head = await requireGit(this.runCommand, path, ["rev-parse", "HEAD"]);
     }
     const changed = contextOnly ? false : await hasChangesAgainstBase(this.runCommand, path, baseRef);
 
@@ -370,8 +378,8 @@ export class ShipWorkflow {
       branch,
       baseBranch,
       baseRef,
-      initialHead,
-      head: initialHead,
+      initialHead: head,
+      head,
       baseSha,
       ...(remoteBranch.code === 0 ? { remoteBranchSha: remoteBranch.stdout.trim() } : {}),
       contextOnly,

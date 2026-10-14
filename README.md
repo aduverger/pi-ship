@@ -10,7 +10,7 @@ Workspace-aware shipping workflow for the [Pi coding agent](https://pi.dev): reb
 - Git
 - GitHub CLI (`gh`), authenticated for `github.com`
 - Clean, committed feature branches in repositories included in simplify/test/review
-- Clean default branches synchronized with `origin` in workspace context/config repositories
+- Clean default branches without local-only commits in workspace context/config repositories
 
 ## Install
 
@@ -69,7 +69,7 @@ Operational commands:
 
 1. Validate that every selected repository is clean and committed.
 2. Fetch each origin and resolve its default branch independently of the configured upstream.
-3. Keep a default-branch repository only when its `HEAD` exactly matches the fetched remote, classifying it as workspace context/config; rebase changed feature branches.
+3. Fast-forward default-branch repositories to the fetched remote and classify them as workspace context/config; block only default branches with local-only commits, and rebase changed feature branches.
 4. Compare the branch design with the agreed intent and existing patterns before cosmetic cleanup. Remove unnecessary architecture only when observable behavior and required guarantees stay unchanged; report intent mismatches for review. Simplify the listed changed-feature files, using Git line ranges as guidance rather than hard edit boundaries, run focused validation, and commit per repository.
 5. Curate branch-added or modified automated tests for durable confidence. Require a named regression and distinct protection; uncertainty alone does not justify retention. Check redundancy before adding coverage, remove or consolidate structure-only tests, and rewrite valuable brittle tests at the smallest stable seam. Preserve contractual, security, and data-integrity coverage without a deletion quota. Run the repository-standard affected validation and commit any changes per repository.
 6. Launch one fresh, read-only Pi reviewer over the complete selected workspace. It inherits the active model, always uses high thinking, can page through complete Git diffs, and focuses on concrete defects and unnecessary complexity, not maximizing findings or hardening. Scenario-dependent findings require a supported trigger, observable failure, and proportionate remedy. General test durability remains owned by the Test phase; later reviewers apply that policy only to tests and supporting files changed by the immediately preceding review fixes.
@@ -86,7 +86,7 @@ The changed-line simplification prompt is adapted from [MattDevy/pi-simplify](ht
 
 ## Safety properties
 
-- No dirty repository enters the workflow; default-branch repositories must exactly match their fetched remote and remain immutable workspace context.
+- No dirty repository enters the workflow; default-branch repositories are fast-forwarded to their fetched remote, must not contain local-only commits, and remain immutable workspace context.
 - Reviewer subprocess has no bash, edit, or write tools.
 - Rebased existing branches use `--force-with-lease` against the observed remote SHA.
 - A moved default branch restarts rebase, simplification, test curation, and review before publication.
