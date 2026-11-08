@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildReviewPrompt, collectReviewerDecisions, runWorkspaceReviewer } from "./reviewer.js";
+import { REVIEW_SYSTEM_PROMPT } from "./reviewer-child.js";
 
 vi.mock("node:child_process", async (importOriginal) => ({
   ...await importOriginal<typeof import("node:child_process")>(),
@@ -113,6 +114,8 @@ describe("reviewer provider loading", () => {
     expect(extensions).toHaveLength(provider === "claude-bridge" ? 2 : 1);
     expect(extensions.some((path) => /reviewer-child\.(ts|js)$/.test(path))).toBe(true);
     expect(extensions.includes(bridgePath)).toBe(provider === "claude-bridge");
+    expect(args).toContain("--append-system-prompt");
+    expect(args[args.indexOf("--append-system-prompt") + 1]).toBe(REVIEW_SYSTEM_PROMPT);
     expect(args[args.indexOf("--model") + 1]).toBe(`${provider}/review-model`);
     expect(args[args.indexOf("--tools") + 1]!.split(",").sort())
       .toEqual(["find", "grep", "ls", "read", "ship_git", "submit_review"]);

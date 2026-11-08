@@ -6,6 +6,7 @@ import { basename, dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StringDecoder } from "node:string_decoder";
 import { getAgentDir, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { REVIEW_SYSTEM_PROMPT } from "./reviewer-child.js";
 import type {
   ReviewResult,
   ReviewerManifest,
@@ -148,6 +149,8 @@ export async function runWorkspaceReviewer(
     "--no-context-files",
     "--no-themes",
     "--no-approve",
+    "--append-system-prompt",
+    REVIEW_SYSTEM_PROMPT,
     "--model",
     `${ctx.model.provider}/${ctx.model.id}`,
     "--thinking",
