@@ -111,10 +111,11 @@ describe("reviewer provider loading", () => {
     expect(args).toContain("--no-extensions");
     const extensions = args.flatMap((arg, index) => arg === "-e" ? [args[index + 1]!] : []);
     expect(extensions).toHaveLength(provider === "claude-bridge" ? 2 : 1);
-    expect(extensions.some((path) => path.endsWith("reviewer-child.ts"))).toBe(true);
+    expect(extensions.some((path) => /reviewer-child\.(ts|js)$/.test(path))).toBe(true);
     expect(extensions.includes(bridgePath)).toBe(provider === "claude-bridge");
     expect(args[args.indexOf("--model") + 1]).toBe(`${provider}/review-model`);
-    expect(args[args.indexOf("--tools") + 1]).toBe("read,grep,find,ls,ship_git,submit_review");
+    expect(args[args.indexOf("--tools") + 1]!.split(",").sort())
+      .toEqual(["find", "grep", "ls", "read", "ship_git", "submit_review"]);
   });
 
   it("explains how to install a missing bridge without launching a different model", async () => {
