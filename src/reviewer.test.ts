@@ -1,5 +1,17 @@
-import { describe, expect, it } from "vitest";
-import { buildReviewPrompt, collectReviewerDecisions } from "./reviewer.js";
+import { ChildProcess, spawn } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { PassThrough } from "node:stream";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildReviewPrompt, collectReviewerDecisions, runWorkspaceReviewer } from "./reviewer.js";
+import { REVIEW_SYSTEM_PROMPT } from "./reviewer-child.js";
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...await importOriginal<typeof import("node:child_process")>(),
+  spawn: vi.fn(),
+}));
 import type { ReviewerManifest, StoredReview } from "./types.js";
 
 const review: StoredReview = {
@@ -55,6 +67,68 @@ const review: StoredReview = {
     { findingId: "FIXED", action: "fix", rationale: "Fix now" },
   ],
 };
+
+describe("reviewer provider loading", () => {
+  let agentDir: string;
+
+  beforeEach(async () => {
+    agentDir = await mkdtemp(join(tmpdir(), "pi-ship-provider-"));
+    vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
+    vi.mocked(spawn).mockReset();
+    vi.mocked(spawn).mockImplementation(() => {
+      const child = Object.assign(new ChildProcess(), {
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+      });
+      queueMicrotask(() => {
+        child.stdout.end(`${JSON.stringify({
+          type: "tool_execution_end",
+          toolName: "submit_review",
+          result: { details: { review: review.result } },
+        })}\n`);
+        child.emit("close", 0);
+      });
+      return child;
+    });
+  });
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await rm(agentDir, { recursive: true, force: true });
+  });
+
+  it.each(["claude-bridge", "openai"])("loads only the needed extensions for %s", async (provider) => {
+    const bridgePath = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+    if (provider === "claude-bridge") {
+      await mkdir(bridgePath, { recursive: true });
+      await writeFile(join(bridgePath, "package.json"), JSON.stringify({ name: "pi-claude-bridge" }));
+    }
+    const ctx = { model: { provider, id: "review-model" } } as ExtensionContext;
+
+    const result = await runWorkspaceReviewer(ctx, { root: agentDir, intent: "Review", repositories: [] }, undefined);
+
+    expect(result.summary).toBe(review.result.summary);
+    const args = vi.mocked(spawn).mock.calls[0]![1] as string[];
+    expect(args).toContain("--no-extensions");
+    const extensions = args.flatMap((arg, index) => arg === "-e" ? [args[index + 1]!] : []);
+    expect(extensions).toHaveLength(provider === "claude-bridge" ? 2 : 1);
+    expect(extensions.some((path) => /reviewer-child\.(ts|js)$/.test(path))).toBe(true);
+    expect(extensions.includes(bridgePath)).toBe(provider === "claude-bridge");
+    expect(args).toContain("--append-system-prompt");
+    expect(args[args.indexOf("--append-system-prompt") + 1]).toBe(REVIEW_SYSTEM_PROMPT);
+    expect(args[args.indexOf("--model") + 1]).toBe(`${provider}/review-model`);
+    expect(args[args.indexOf("--tools") + 1]!.split(",").sort())
+      .toEqual(["find", "grep", "ls", "read", "ship_git", "submit_review"]);
+  });
+
+  it("explains how to install a missing bridge without launching a different model", async () => {
+    const ctx = { model: { provider: "claude-bridge", id: "review-model" } } as ExtensionContext;
+
+    await expect(runWorkspaceReviewer(ctx, { root: agentDir, intent: "Review", repositories: [] }, undefined))
+      .rejects.toThrow("pi install npm:pi-claude-bridge");
+    expect(spawn).not.toHaveBeenCalled();
+  });
+});
 
 describe("reviewer context", () => {
   it("passes every user decision and rationale", () => {

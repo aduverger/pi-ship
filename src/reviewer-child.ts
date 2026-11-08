@@ -101,10 +101,6 @@ export default function reviewerChild(pi: ExtensionAPI): void {
   const manifest = loadManifest();
   const repositories = new Map(manifest.repositories.map((repository) => [repository.name, repository]));
 
-  pi.on("before_agent_start", (event) => ({
-    systemPrompt: `${event.systemPrompt}\n\n${REVIEW_SYSTEM_PROMPT}`,
-  }));
-
   pi.registerTool({
     name: "ship_git",
     label: "Ship Git",

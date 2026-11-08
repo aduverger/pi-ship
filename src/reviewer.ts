@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StringDecoder } from "node:string_decoder";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { REVIEW_SYSTEM_PROMPT } from "./reviewer-child.js";
 import type {
   ReviewResult,
   ReviewerManifest,
@@ -121,6 +122,15 @@ export async function runWorkspaceReviewer(
 ): Promise<ReviewResult> {
   if (!ctx.model) throw new Error("No active model is available for code review.");
 
+  const providerExtensions: string[] = [];
+  if (ctx.model.provider === "claude-bridge") {
+    const bridgePath = join(getAgentDir(), "npm", "node_modules", "pi-claude-bridge");
+    if (!existsSync(join(bridgePath, "package.json"))) {
+      throw new Error("Review with claude-bridge requires pi-claude-bridge installed with: pi install npm:pi-claude-bridge");
+    }
+    providerExtensions.push("-e", bridgePath);
+  }
+
   const tempDirectory = await mkdtemp(join(tmpdir(), "pi-ship-review-"));
   const manifestPath = join(tempDirectory, "manifest.json");
   await writeFile(manifestPath, JSON.stringify(manifest), { encoding: "utf8", mode: 0o600 });
@@ -131,6 +141,7 @@ export async function runWorkspaceReviewer(
     "-p",
     "--no-session",
     "--no-extensions",
+    ...providerExtensions,
     "-e",
     reviewerExtensionPath(),
     "--no-skills",
@@ -138,6 +149,8 @@ export async function runWorkspaceReviewer(
     "--no-context-files",
     "--no-themes",
     "--no-approve",
+    "--append-system-prompt",
+    REVIEW_SYSTEM_PROMPT,
     "--model",
     `${ctx.model.provider}/${ctx.model.id}`,
     "--thinking",

@@ -78,6 +78,8 @@ Operational commands:
 9. Verify that every pushed SHA exactly matches the reviewed SHA and that default branches have not advanced.
 10. Push all changed branches, create or update one draft PR per changed repository, and cross-link related PRs.
 
+When the active provider is `claude-bridge`, the reviewer explicitly loads the user-installed `pi-claude-bridge` package from Pi's managed npm directory (`pi install npm:pi-claude-bridge`). Other automatically discovered extensions remain disabled, and the reviewer's read-only tool selection is unchanged. The reviewer does not fall back to another model.
+
 Workflow-phase activity and independent-review results stay in Pi. Pull requests describe final changes and validation, not simplification or test-curation activity.
 
 Unchanged feature-branch repositories remain available to the reviewer as integration context and do not produce commits or PRs unless an approved review fix changes them. Default-branch context/config repositories remain available in the workspace but are excluded from simplification, test curation, and independent review, and must stay unmodified throughout the run.
