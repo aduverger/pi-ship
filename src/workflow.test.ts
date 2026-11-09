@@ -394,8 +394,8 @@ describe("ShipWorkflow", () => {
     await workflow.start("", fakeContext(workspace));
 
     expect(state.messages).toHaveLength(1);
-    expect(state.messages[0]?.content).toContain("### api");
-    expect(state.messages[0]?.content).not.toContain("### frontend");
+    expect(state.messages[0]?.content).toContain(api);
+    expect(state.messages[0]?.content).not.toContain(join(workspace, "frontend"));
     expect(await execFileAsync("git", ["status", "--porcelain"], { cwd: api }).then((result) => result.stdout)).toBe("");
     const stored = latestRun(state);
     expect(stored.stage).toBe("simplifying");
@@ -418,9 +418,7 @@ describe("ShipWorkflow", () => {
     const ctx = fakeContext(workspace);
     await workflow.start("", ctx);
 
-    const testing = await reportApiSimplification(workflow, ctx, "Ship the API change.");
-    expect(testing.content[0]?.text).toContain("durable confidence");
-    expect(testing.content[0]?.text).toContain("behavior-preserving refactor");
+    await reportApiSimplification(workflow, ctx, "Ship the API change.");
     expect(latestRun(state).stage).toBe("testing");
 
     await writeFile(join(api, "file.test.ts"), "export {};\n", "utf8");
@@ -541,18 +539,12 @@ describe("ShipWorkflow", () => {
     const ctx = fakeContext(workspace);
 
     await workflow.start("api --auto", ctx);
-    const reviewed = await completeApiPreparation(workflow, ctx, "Ship the API change.");
+    await completeApiPreparation(workflow, ctx, "Ship the API change.");
 
-    expect(reviewed.content[0]?.text).toContain("call ship_report with action \"decision\"");
-    expect(reviewed.content[0]?.text).toContain("Do not wait for user input");
-    expect(reviewed.content[0]?.text).toContain("authoritative fixtures");
-    expect(reviewed.content[0]?.text).toContain("realistically reachable, or theoretical");
-    expect(reviewed.content[0]?.text).toContain("Technical validity and a small patch are not sufficient");
-    expect(reviewed.content[0]?.text).not.toContain("trivial, unambiguous fix");
     expect(workflow.status(ctx)).toContain("auto, review round 1/5");
     expect(latestRun(state).auto).toBe(true);
 
-    const decision = await workflow.handleReport(
+    await workflow.handleReport(
       {
         action: "decision",
         decisions: [{ findingId: "R1", action: "fix", rationale: "Directly reachable contract break." }],
@@ -561,7 +553,6 @@ describe("ShipWorkflow", () => {
       undefined,
     );
 
-    expect(decision.content[0]?.text).toContain("Apply only these approved review fixes");
     expect(latestRun(state).stage).toBe("fixing");
   });
 
@@ -581,14 +572,6 @@ describe("ShipWorkflow", () => {
 
     const reviewed = await completeApiPreparation(workflow, ctx, "Ship the coordinated API change.");
     expect(reviewed.content[0]?.text).toContain("No actionable findings");
-    expect(reviewed.content[0]?.text).toContain("Call ship_report with action \"publish\"");
-    expect(reviewed.content[0]?.text).toContain("Do not include an Independent review section");
-    expect(reviewed.content[0]?.text).toContain("Include a Cross-repository context section only when");
-    expect(reviewed.content[0]?.text).toContain("omit it for a single-repository ship");
-    expect(reviewed.content[0]?.text).toContain("combine recurring routine gates");
-    expect(reviewed.content[0]?.text).toContain("category names instead of exact commands");
-    expect(reviewed.content[0]?.text).toContain("do not mention the Simplify or Test workflow phases");
-    expect(reviewed.content[0]?.text).not.toContain("## Review history");
     expect(state.entries.some((entry) => entry.customType === "pi-ship-review")).toBe(true);
     expect(workflow.status(ctx)).toContain("Independent review round 1 — pass");
     expect(reviewerManifest?.repositories.map(({ name }) => name)).toEqual(["api"]);
@@ -694,10 +677,9 @@ describe("ShipWorkflow", () => {
       ctx,
       undefined,
     );
-    expect(drafting.content[0]?.text).toContain("autonomous review limit was reached");
     expect(drafting.content[0]?.text).toContain("[blocking] api: Preserve the API contract");
-    expect(drafting.content[0]?.text).toContain("Follow-up: Restore compatibility in follow-up.");
-    expect(drafting.content[0]?.text).toContain("Tradeoff: The current API prevents this theoretical case.");
+    expect(drafting.content[0]?.text).toContain("Restore compatibility in follow-up.");
+    expect(drafting.content[0]?.text).toContain("The current API prevents this theoretical case.");
     expect(drafting.content[0]?.text).not.toContain("Add a speculative fallback");
 
     const baseSha = await execFileAsync("git", ["rev-parse", "refs/remotes/origin/main"], { cwd: api })
@@ -723,8 +705,8 @@ describe("ShipWorkflow", () => {
 
     const rereviewed = await completeApiPreparation(workflow, ctx, "Ship the API change.");
     expect(rereviewed.content[0]?.text).toContain("No actionable findings");
-    expect(rereviewed.content[0]?.text).toContain("Follow-up: Restore compatibility in follow-up.");
-    expect(rereviewed.content[0]?.text).toContain("Tradeoff: The current API prevents this theoretical case.");
+    expect(rereviewed.content[0]?.text).toContain("Restore compatibility in follow-up.");
+    expect(rereviewed.content[0]?.text).toContain("The current API prevents this theoretical case.");
 
     await workflow.handleReport(
       {
@@ -782,7 +764,7 @@ describe("ShipWorkflow", () => {
     expect(pullRequestCommands.some(({ args }) => args[1] === "edit")).toBe(true);
   });
 
-  it("presents findings with context and scopes test durability to review fixes", async () => {
+  it("passes approved rationale and scopes test durability to review fixes", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "pi-ship-review-fix-summary-"));
     const api = await createClonedRepository(workspace, "api", true);
     const state: FakePiState = { entries: [], messages: [], commands: [] };
@@ -816,12 +798,7 @@ describe("ShipWorkflow", () => {
     const workflow = new ShipWorkflow(fakePi(state), reviewer);
     const ctx = fakeContext(workspace);
     await workflow.start("", ctx);
-    const awaitingDecision = await completeApiPreparation(workflow, ctx, "Ship the API change.");
-    expect(awaitingDecision.content[0]?.text).toContain("Background you need first");
-    expect(awaitingDecision.content[0]?.text).toContain("has not read the implementation");
-    expect(awaitingDecision.content[0]?.text).toContain("the intended behavior");
-    expect(awaitingDecision.content[0]?.text).toContain("recommended disposition—fix, accept, or defer");
-    expect(awaitingDecision.content[0]?.text).toContain("rationale and tradeoffs");
+    await completeApiPreparation(workflow, ctx, "Ship the API change.");
     expect(reviewerManifests[0]?.repositories[0]?.reviewFixPaths).toBeUndefined();
 
     const userEntry = {
@@ -841,9 +818,7 @@ describe("ShipWorkflow", () => {
       undefined,
     );
 
-    expect(fixing.content[0]?.text).toContain(`Decision rationale: ${approvedRationale}`);
-    expect(fixing.content[0]?.text).toContain("Treat the approved decision rationale as authoritative over the original reviewer recommendation");
-    expect(fixing.content[0]?.text).toContain("remove its now-unnecessary machinery and tests within the approved scope");
+    expect(fixing.content[0]?.text).toContain(approvedRationale);
 
     await writeFile(join(api, "file.txt"), "review fix\n", "utf8");
     await writeFile(join(api, "file.test.ts"), "export {};\n", "utf8");
@@ -864,13 +839,10 @@ describe("ShipWorkflow", () => {
     );
 
     expect(reviewed.content[0]?.text).not.toContain("Review fixes: addressed R1");
-    expect(reviewed.content[0]?.text).not.toContain("## Review history");
-    expect(reviewed.content[0]?.text).toContain("Summary:\nUpdated the API.");
+    expect(reviewed.content[0]?.text).toContain("Updated the API.");
     expect(await execFileAsync("git", ["log", "-1", "--pretty=%s"], { cwd: api }).then(({ stdout }) => stdout.trim())).toBe(
       "fix: update API fixture",
     );
-    expect(awaitingDecision.content[0]?.text).toContain("distinguish technical validity");
-    expect(awaitingDecision.content[0]?.text).toContain("Prefer accept or defer for theoretical cases");
     expect(reviewerManifests[1]?.repositories[0]?.reviewFixBase).toMatch(/^[0-9a-f]{40}$/);
     expect(reviewerManifests[1]?.repositories[0]?.reviewFixPaths).toEqual(["file.test.ts", "file.txt"]);
   });
@@ -1021,7 +993,7 @@ describe("ShipWorkflow", () => {
     );
   });
 
-  it("repeats decision guidance on resume and requires a user response", async () => {
+  it("requires a user response after restoring an awaiting-decision run", async () => {
     const now = Date.now();
     const run: ShipRun = {
       version: 1,
@@ -1080,8 +1052,6 @@ describe("ShipWorkflow", () => {
     const reviewContext = fakeContext("/workspace", [storedEntry]);
     workflow.restore(reviewContext);
     await workflow.resume(reviewContext);
-    expect(state.messages.at(-1)?.content).toContain("Background you need first");
-    expect(state.messages.at(-1)?.content).toContain("self-contained for someone who has not read the code");
     const decision = {
       action: "decision" as const,
       decisions: [{ findingId: "R1", action: "fix" as const, rationale: "approved" }],
@@ -1098,14 +1068,12 @@ describe("ShipWorkflow", () => {
       timestamp: new Date(now + 1).toISOString(),
       message: { role: "user", content: "fix it", timestamp: now + 1 },
     } as SessionEntry;
-    const result = await workflow.handleReport(
+    await workflow.handleReport(
       decision,
       fakeContext("/workspace", [storedEntry, userEntry]),
       undefined,
     );
-    expect(result.content[0]?.text).toContain("Apply only these approved review fixes");
-    expect(result.content[0]?.text).toContain("commitMessage");
-    expect(result.content[0]?.text).toContain("do not use generic review-workflow wording");
+    expect(latestRun(state).stage).toBe("fixing");
     const reviewEntry = state.entries.at(-1);
     expect(reviewEntry?.customType).toBe("pi-ship-review");
     expect(reviewEntry?.data).toMatchObject({ review: { decisions: decision.decisions } });

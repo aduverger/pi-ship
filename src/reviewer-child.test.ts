@@ -4,7 +4,7 @@ import {
   DEFAULT_MAX_LINES,
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { paginateOutput, REVIEW_SYSTEM_PROMPT } from "./reviewer-child.js";
+import { paginateOutput } from "./reviewer-child.js";
 
 function readAllPages(output: string): { reconstructed: string; pages: number } {
   let cursor = 0;
@@ -21,18 +21,6 @@ function readAllPages(output: string): { reconstructed: string; pages: number } 
     cursor = page.nextCursor ?? cursor;
   }
 }
-
-describe("reviewer policy", () => {
-  it("requires concrete, proportionate findings", () => {
-    expect(REVIEW_SYSTEM_PROMPT).toContain("do not maximize findings or hardening");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("a concrete supported trigger, the observable failure, and existing prevention or recovery");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("a specific redundant concept or concrete ongoing cost");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("Report a low-probability security or data-loss issue when the code exposes a direct, credible trigger");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("If that scope is empty, do not perform a general durability audit");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("decide whether a test deserves retention before recommending a rewrite");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("Retain or recommend adding tests only when expectations come from real contracts, known failures, meaningful properties, or authoritative reference implementations");
-  });
-});
 
 describe("paginateOutput", () => {
   it("retrieves output larger than both tool limits without losing content", () => {

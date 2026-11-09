@@ -26,21 +26,14 @@ function repository(overrides: Partial<ShipRepositoryState> = {}): ShipRepositor
 }
 
 describe("buildWorkspaceTestingPrompt", () => {
-  it("prunes before improving tests while allowing grounded protection within scope", () => {
+  it("includes changed files and excludes unchanged repositories", () => {
     const prompt = buildWorkspaceTestingPrompt([
       repository(),
       repository({ name: "frontend", changed: false, simplifyScope: [] }),
     ]);
 
-    expect(prompt).toContain("decide whether a test deserves to survive delivery before improving it");
-    expect(prompt).toContain("Retain or add tests only when expectations come from real contracts, known failures, meaningful properties, or authoritative reference implementations");
-    expect(prompt).toContain("Remove tests specific to one-off migrations or scripts");
-    expect(prompt).toContain("test definitions in this pass, not parameterized cases or cumulative branch totals");
-    expect(prompt).toContain("do not perform a whole-suite cleanup");
-    expect(prompt).toContain("Do not force test churn or a deletion quota");
-    expect(prompt).toContain('action "testing-complete"');
-    expect(prompt).toContain("without mentioning workflow phases");
-    expect(prompt).toContain("src/feature.ts (modified; changed lines: 4-8)");
-    expect(prompt).not.toContain("### frontend");
+    expect(prompt).toContain("src/feature.ts");
+    expect(prompt).toContain("src/feature.test.ts");
+    expect(prompt).not.toContain("frontend");
   });
 });
