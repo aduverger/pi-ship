@@ -29,7 +29,8 @@ describe("reviewer policy", () => {
     expect(REVIEW_SYSTEM_PROMPT).toContain("a specific redundant concept or concrete ongoing cost");
     expect(REVIEW_SYSTEM_PROMPT).toContain("Report a low-probability security or data-loss issue when the code exposes a direct, credible trigger");
     expect(REVIEW_SYSTEM_PROMPT).toContain("If that scope is empty, do not perform a general durability audit");
-    expect(REVIEW_SYSTEM_PROMPT).toContain("Recommend removal or consolidation for tests that only pin structure or duplicate protection without a distinct risk");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("decide whether a test deserves retention before recommending a rewrite");
+    expect(REVIEW_SYSTEM_PROMPT).toContain("Retain or recommend adding tests only when expectations come from real contracts, known failures, meaningful properties, or authoritative reference implementations");
   });
 });
 
