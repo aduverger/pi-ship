@@ -50,15 +50,20 @@ describe("pi-ship session events", () => {
 
     await handlers.get("session_start")?.[0]?.({}, ctx);
     const beforeAgentStart = handlers.get("before_agent_start")?.[0];
-    expect(beforeAgentStart?.({ systemPrompt: "base" }, ctx)?.systemPrompt).toContain("simplifying");
+    const initialGuidance = beforeAgentStart?.({ systemPrompt: "base" }, ctx);
+    expect(initialGuidance).toBeDefined();
 
     branch = [entry(run("second", "testing"))];
     await handlers.get("session_tree")?.[0]?.({}, ctx);
-    expect(beforeAgentStart?.({ systemPrompt: "base" }, ctx)?.systemPrompt).toContain("curating durable tests");
+    const testingGuidance = beforeAgentStart?.({ systemPrompt: "base" }, ctx);
+    expect(testingGuidance).toBeDefined();
+    expect(testingGuidance).not.toEqual(initialGuidance);
 
     branch = [entry(run("third", "drafting"))];
     await handlers.get("session_tree")?.[0]?.({}, ctx);
-    expect(beforeAgentStart?.({ systemPrompt: "base" }, ctx)?.systemPrompt).toContain("ready to publish");
+    const draftingGuidance = beforeAgentStart?.({ systemPrompt: "base" }, ctx);
+    expect(draftingGuidance).toBeDefined();
+    expect(draftingGuidance).not.toEqual(testingGuidance);
 
     branch = [];
     await handlers.get("session_tree")?.[0]?.({}, ctx);

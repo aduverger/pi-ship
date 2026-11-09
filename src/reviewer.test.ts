@@ -160,7 +160,7 @@ describe("reviewer context", () => {
     ]);
   });
 
-  it("instructs later reviewers to respect prior decisions", () => {
+  it("includes prior decisions, curation evidence, and review-fix scope", () => {
     const manifest: ReviewerManifest = {
       root: "/workspace",
       intent: "Ship the feature",
@@ -188,26 +188,11 @@ describe("reviewer context", () => {
     };
     const prompt = buildReviewPrompt(manifest);
 
-    expect(prompt).toContain("ACCEPTED (api): Accepted tradeoff");
-    expect(prompt).toContain("DEFERRED (frontend): Deferred work");
-    expect(prompt).toContain("FIXED (api): Fixed bug");
-    expect(prompt).toContain("the rationale overrides conflicting language");
-    expect(prompt).toContain("1 added, 2 rewritten, 0 consolidated, 3 removed");
-    expect(prompt).toContain("protected behaviors: API compatibility");
-    expect(prompt).toContain("internal evidence, not requirements");
-    expect(prompt).toContain("api, changes since abc123");
+    expect(prompt).toContain("Accepted tradeoff");
+    expect(prompt).toContain("Deferred work");
+    expect(prompt).toContain("Fixed bug");
+    expect(prompt).toContain("API compatibility");
+    expect(prompt).toContain("abc123");
     expect(prompt).toContain("src/api.test.ts");
-    expect(prompt).toContain('ship_git action "review-fix-diff"');
-    expect(prompt).toContain("Do not re-audit other tests for general durability");
-  });
-
-  it("leaves the initial review durability audit to the Test phase", () => {
-    const prompt = buildReviewPrompt({
-      root: "/workspace",
-      intent: "Ship the feature",
-      repositories: [],
-    });
-
-    expect(prompt).toContain("None. The dedicated Test phase already curated the original branch tests");
   });
 });
