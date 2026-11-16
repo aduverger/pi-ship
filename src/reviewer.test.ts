@@ -97,11 +97,15 @@ describe("reviewer provider loading", () => {
     await rm(agentDir, { recursive: true, force: true });
   });
 
-  it.each(["claude-bridge", "openai"])("loads only the needed extensions for %s", async (provider) => {
-    const bridgePath = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
-    if (provider === "claude-bridge") {
-      await mkdir(bridgePath, { recursive: true });
-      await writeFile(join(bridgePath, "package.json"), JSON.stringify({ name: "pi-claude-bridge" }));
+  it.each([
+    ["claude-bridge", ["npm", "node_modules", "pi-claude-bridge"]],
+    ["claude-code", ["git", "github.com", "earendil-works", "pi-claude-code"]],
+    ["openai", undefined],
+  ])("loads only the needed extensions for %s", async (provider, packageSegments) => {
+    const providerPath = packageSegments && join(agentDir, ...packageSegments);
+    if (providerPath) {
+      await mkdir(providerPath, { recursive: true });
+      await writeFile(join(providerPath, "package.json"), "{}");
     }
     const ctx = { model: { provider, id: "review-model" } } as ExtensionContext;
 
@@ -111,9 +115,9 @@ describe("reviewer provider loading", () => {
     const args = vi.mocked(spawn).mock.calls[0]![1] as string[];
     expect(args).toContain("--no-extensions");
     const extensions = args.flatMap((arg, index) => arg === "-e" ? [args[index + 1]!] : []);
-    expect(extensions).toHaveLength(provider === "claude-bridge" ? 2 : 1);
+    expect(extensions).toHaveLength(providerPath ? 2 : 1);
     expect(extensions.some((path) => /reviewer-child\.(ts|js)$/.test(path))).toBe(true);
-    expect(extensions.includes(bridgePath)).toBe(provider === "claude-bridge");
+    if (providerPath) expect(extensions).toContain(providerPath);
     expect(args).toContain("--append-system-prompt");
     expect(args[args.indexOf("--append-system-prompt") + 1]).toBe(REVIEW_SYSTEM_PROMPT);
     expect(args[args.indexOf("--model") + 1]).toBe(`${provider}/review-model`);
@@ -121,11 +125,14 @@ describe("reviewer provider loading", () => {
       .toEqual(["find", "grep", "ls", "read", "ship_git", "submit_review"]);
   });
 
-  it("explains how to install a missing bridge without launching a different model", async () => {
-    const ctx = { model: { provider: "claude-bridge", id: "review-model" } } as ExtensionContext;
+  it.each([
+    ["claude-bridge", "pi install npm:pi-claude-bridge"],
+    ["claude-code", "pi install git:github.com/earendil-works/pi-claude-code"],
+  ])("explains how to install a missing %s package without launching a different model", async (provider, hint) => {
+    const ctx = { model: { provider, id: "review-model" } } as ExtensionContext;
 
     await expect(runWorkspaceReviewer(ctx, { root: agentDir, intent: "Review", repositories: [] }, undefined))
-      .rejects.toThrow("pi install npm:pi-claude-bridge");
+      .rejects.toThrow(hint);
     expect(spawn).not.toHaveBeenCalled();
   });
 });

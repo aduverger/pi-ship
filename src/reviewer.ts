@@ -26,6 +26,31 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
   return { command: "pi", args };
 }
 
+const PROVIDER_PACKAGES: Record<string, { name: string; installedPath: string[]; installSource: string }> = {
+  "claude-bridge": {
+    name: "pi-claude-bridge",
+    installedPath: ["npm", "node_modules", "pi-claude-bridge"],
+    installSource: "npm:pi-claude-bridge",
+  },
+  "claude-code": {
+    name: "pi-claude-code",
+    installedPath: ["git", "github.com", "earendil-works", "pi-claude-code"],
+    installSource: "git:github.com/earendil-works/pi-claude-code",
+  },
+};
+
+function providerExtensionArgs(provider: string): string[] {
+  const providerPackage = PROVIDER_PACKAGES[provider];
+  if (!providerPackage) return [];
+  const packagePath = join(getAgentDir(), ...providerPackage.installedPath);
+  if (!existsSync(join(packagePath, "package.json"))) {
+    throw new Error(
+      `Review with ${provider} requires ${providerPackage.name} installed with: pi install ${providerPackage.installSource}`,
+    );
+  }
+  return ["-e", packagePath];
+}
+
 function reviewerExtensionPath(): string {
   const currentPath = fileURLToPath(import.meta.url);
   const extension = extname(currentPath);
@@ -122,14 +147,7 @@ export async function runWorkspaceReviewer(
 ): Promise<ReviewResult> {
   if (!ctx.model) throw new Error("No active model is available for code review.");
 
-  const providerExtensions: string[] = [];
-  if (ctx.model.provider === "claude-bridge") {
-    const bridgePath = join(getAgentDir(), "npm", "node_modules", "pi-claude-bridge");
-    if (!existsSync(join(bridgePath, "package.json"))) {
-      throw new Error("Review with claude-bridge requires pi-claude-bridge installed with: pi install npm:pi-claude-bridge");
-    }
-    providerExtensions.push("-e", bridgePath);
-  }
+  const providerExtensions = providerExtensionArgs(ctx.model.provider);
 
   const tempDirectory = await mkdtemp(join(tmpdir(), "pi-ship-review-"));
   const manifestPath = join(tempDirectory, "manifest.json");
